@@ -42,6 +42,7 @@ fazer. **Siga a ordem.** Cada task depende das anteriores.
    real na mão) e deve ser anotada no fim do PR.
 
 Glossário:
+
 - **loopback**: gravar o que um device de **saída** está tocando.
 - **crate**: `crates/handy-recorder`, a biblioteca de captura que vamos
   copiar para dentro do repo.
@@ -89,6 +90,7 @@ publicada. Nenhum comportamento muda.
    handy-recorder = { path = "../crates/handy-recorder" }
    ```
 6. Crie `crates/handy-recorder/FORK.md` com:
+
    ```markdown
    # Fork of handy-recorder 0.1.1
 
@@ -98,10 +100,12 @@ publicada. Nenhum comportamento muda.
 
    Files changed from upstream are listed here as they change:
    ```
+
 7. Rode `cd src-tauri && cargo check`. O `Cargo.lock` muda só na entrada de
    `handy-recorder` (a linha `source` e o `checksum` somem). Isso é esperado.
 
 **Verificação:**
+
 - `cd src-tauri && cargo check` passa.
 - `cd crates/handy-recorder && cargo test --features test-backend` passa (os
   testes da própria crate).
@@ -158,10 +162,11 @@ legíveis no diff.)
      `unwrap_or_else`).
    - `backend/fake.rs`: em `FakeBackend::new`.
    - Talvez em `src/testing.rs`: procure `InputDevice {`.
-   Importe `DeviceKind` onde precisar (`use crate::DeviceKind;` ou junto do
-   `use crate::{InputDevice, …}` que já existe).
+     Importe `DeviceKind` onde precisar (`use crate::DeviceKind;` ou junto do
+     `use crate::{InputDevice, …}` que já existe).
 
 **Verificação:**
+
 - `cd crates/handy-recorder && cargo test --features test-backend` passa.
 - `cd src-tauri && cargo check` passa.
 - `grep -rn "InputDevice {" crates/handy-recorder/src` mostra `kind:` em
@@ -187,6 +192,7 @@ suporta loopback, para os testes.
 **Passos:**
 
 1. Em `backend/mod.rs`, logo depois dos `use` do topo, adicione:
+
    ```rust
    /// Prefix of every loopback device ID. CoreAudio gives a device's input
    /// and output the same UID, so the direction has to live in the ID.
@@ -215,8 +221,10 @@ suporta loopback, para os testes.
        }
    }
    ```
+
 2. No mesmo arquivo, no `pub(crate) trait Backend`, adicione depois de
    `fn list_input_devices`:
+
    ```rust
        /// Outputs that can be recorded by loopback; empty where unsupported.
        fn list_loopback_devices(&self) -> Result<Vec<InputDevice>, BackendError>;
@@ -224,7 +232,9 @@ suporta loopback, para os testes.
        /// Whether this OS can record an output at all.
        fn loopback_supported(&self) -> bool;
    ```
+
 3. No fim de `backend/mod.rs`, adicione testes do parse:
+
    ```rust
    #[cfg(test)]
    mod device_ref_tests {
@@ -246,8 +256,10 @@ suporta loopback, para os testes.
        }
    }
    ```
+
 4. Em `backend/cpal/mod.rs`, dentro de `impl Backend for CpalBackend`,
    implemente provisoriamente (a T4 troca pela versão real):
+
    ```rust
        fn list_loopback_devices(&self) -> Result<Vec<InputDevice>, BackendError> {
            Ok(Vec::new())
@@ -257,7 +269,9 @@ suporta loopback, para os testes.
            false
        }
    ```
+
 5. Em `device.rs`, adicione depois de `pub fn list_input_devices`:
+
    ```rust
    /// Lists outputs that can be recorded by loopback: what a sound card is
    /// playing. Empty where the OS can't (macOS before 14.6, Linux). Pass an
@@ -273,6 +287,7 @@ suporta loopback, para os testes.
        CpalBackend::shared().loopback_supported()
    }
    ```
+
 6. Em `lib.rs`, exporte as duas funções no `pub use device::{…}`:
    ```rust
    pub use device::{
@@ -282,108 +297,119 @@ suporta loopback, para os testes.
    ```
 7. **Fake backend** (`backend/fake.rs`):
    a. No `struct State`, adicione:
-      ```rust
-          /// Loopback devices this fake lists, with `LOOPBACK_PREFIX` IDs.
-          loopback: Vec<InputDevice>,
-          /// Behave like an OS that can't record its output (default: it can).
-          loopback_unsupported: bool,
-      ```
-      (`State` tem `#[derive(Default)]`: `Vec` e `bool` já têm default, então
-      não precisa mudar mais nada.)
+
+   ```rust
+       /// Loopback devices this fake lists, with `LOOPBACK_PREFIX` IDs.
+       loopback: Vec<InputDevice>,
+       /// Behave like an OS that can't record its output (default: it can).
+       loopback_unsupported: bool,
+   ```
+
+   (`State` tem `#[derive(Default)]`: `Vec` e `bool` já têm default, então
+   não precisa mudar mais nada.)
    b. No `impl FakeBackend`, adicione:
-      ```rust
-          /// Adds a loopback device; `raw_id` gets `LOOPBACK_PREFIX`.
-          pub fn add_loopback(&self, raw_id: &str, name: &str) {
-              let device = InputDevice {
-                  id: format!("{LOOPBACK_PREFIX}{raw_id}"),
-                  name: name.into(),
-                  occurrence: 0,
-                  backend: "Fake".into(),
-                  is_default: self.shared.state.lock().unwrap().loopback.is_empty(),
-                  id_is_stable: true,
-                  channels: Some(self.shared.format.channels),
-                  is_monitor: false,
-                  kind: DeviceKind::Loopback,
-              };
-              self.shared.state.lock().unwrap().loopback.push(device);
-          }
 
-          /// Behave like macOS before 14.6.
-          pub fn set_loopback_unsupported(&self) {
-              self.shared.state.lock().unwrap().loopback_unsupported = true;
-          }
-      ```
-      Imports necessários no topo: `use super::LOOPBACK_PREFIX;` e
-      `use crate::DeviceKind;` (ou junte aos `use` existentes).
+   ```rust
+       /// Adds a loopback device; `raw_id` gets `LOOPBACK_PREFIX`.
+       pub fn add_loopback(&self, raw_id: &str, name: &str) {
+           let device = InputDevice {
+               id: format!("{LOOPBACK_PREFIX}{raw_id}"),
+               name: name.into(),
+               occurrence: 0,
+               backend: "Fake".into(),
+               is_default: self.shared.state.lock().unwrap().loopback.is_empty(),
+               id_is_stable: true,
+               channels: Some(self.shared.format.channels),
+               is_monitor: false,
+               kind: DeviceKind::Loopback,
+           };
+           self.shared.state.lock().unwrap().loopback.push(device);
+       }
+
+       /// Behave like macOS before 14.6.
+       pub fn set_loopback_unsupported(&self) {
+           self.shared.state.lock().unwrap().loopback_unsupported = true;
+       }
+   ```
+
+   Imports necessários no topo: `use super::LOOPBACK_PREFIX;` e
+   `use crate::DeviceKind;` (ou junte aos `use` existentes).
    c. Troque `struct FakeOpenDevice(FakeBackend);` por:
-      ```rust
-      struct FakeOpenDevice {
-          backend: FakeBackend,
-          info: InputDevice,
-      }
-      ```
-      Ajuste o `impl OpenDevice for FakeOpenDevice`: `info()` retorna
-      `&self.info`; `format()` usa `self.backend.shared.format`; em `start()`,
-      troque todo `self.0` por `self.backend`; e o retorno final passa a ser
-      `Ok(Box::new(FakeStream(self.backend)))`.
-   d. No `impl Backend for FakeBackend`:
-      ```rust
-          fn list_loopback_devices(&self) -> Result<Vec<InputDevice>, BackendError> {
-              let state = self.shared.state.lock().unwrap();
-              if state.loopback_unsupported {
-                  return Ok(Vec::new());
-              }
-              Ok(state.loopback.clone())
-          }
 
-          fn loopback_supported(&self) -> bool {
-              !self.shared.state.lock().unwrap().loopback_unsupported
-          }
-      ```
-      E reescreva `open_device` assim:
-      ```rust
-          fn open_device(&self, id: Option<&str>) -> Result<Box<dyn OpenDevice>, BackendError> {
-              if let Some(error) = self.shared.state.lock().unwrap().next_open_error.take() {
-                  return Err(error);
-              }
-              let info = match DeviceRef::parse(id) {
-                  DeviceRef::Default => self.shared.device.clone(),
-                  DeviceRef::Input(id) if id == self.shared.device.id => self.shared.device.clone(),
-                  DeviceRef::Input(id) => {
-                      return Err(BackendError::new(
-                          BackendErrorKind::DeviceNotAvailable,
-                          format!("No input device with ID {id:?}"),
-                      ));
-                  }
-                  DeviceRef::Loopback(raw) => {
-                      if !self.loopback_supported() {
-                          return Err(BackendError::new(
-                              BackendErrorKind::UnsupportedConfig,
-                              "loopback is not supported",
-                          ));
-                      }
-                      let full = format!("{LOOPBACK_PREFIX}{raw}");
-                      let state = self.shared.state.lock().unwrap();
-                      match state.loopback.iter().find(|d| d.id == full) {
-                          Some(device) => device.clone(),
-                          None => {
-                              return Err(BackendError::new(
-                                  BackendErrorKind::DeviceNotAvailable,
-                                  format!("No output device with ID {raw:?}"),
-                              ));
-                          }
-                      }
-                  }
-              };
-              Ok(Box::new(FakeOpenDevice {
-                  backend: self.clone(),
-                  info,
-              }))
-          }
-      ```
-      Importe `DeviceRef` (`use super::DeviceRef;`).
+   ```rust
+   struct FakeOpenDevice {
+       backend: FakeBackend,
+       info: InputDevice,
+   }
+   ```
+
+   Ajuste o `impl OpenDevice for FakeOpenDevice`: `info()` retorna
+   `&self.info`; `format()` usa `self.backend.shared.format`; em `start()`,
+   troque todo `self.0` por `self.backend`; e o retorno final passa a ser
+   `Ok(Box::new(FakeStream(self.backend)))`.
+   d. No `impl Backend for FakeBackend`:
+
+   ```rust
+       fn list_loopback_devices(&self) -> Result<Vec<InputDevice>, BackendError> {
+           let state = self.shared.state.lock().unwrap();
+           if state.loopback_unsupported {
+               return Ok(Vec::new());
+           }
+           Ok(state.loopback.clone())
+       }
+
+       fn loopback_supported(&self) -> bool {
+           !self.shared.state.lock().unwrap().loopback_unsupported
+       }
+   ```
+
+   E reescreva `open_device` assim:
+
+   ```rust
+       fn open_device(&self, id: Option<&str>) -> Result<Box<dyn OpenDevice>, BackendError> {
+           if let Some(error) = self.shared.state.lock().unwrap().next_open_error.take() {
+               return Err(error);
+           }
+           let info = match DeviceRef::parse(id) {
+               DeviceRef::Default => self.shared.device.clone(),
+               DeviceRef::Input(id) if id == self.shared.device.id => self.shared.device.clone(),
+               DeviceRef::Input(id) => {
+                   return Err(BackendError::new(
+                       BackendErrorKind::DeviceNotAvailable,
+                       format!("No input device with ID {id:?}"),
+                   ));
+               }
+               DeviceRef::Loopback(raw) => {
+                   if !self.loopback_supported() {
+                       return Err(BackendError::new(
+                           BackendErrorKind::UnsupportedConfig,
+                           "loopback is not supported",
+                       ));
+                   }
+                   let full = format!("{LOOPBACK_PREFIX}{raw}");
+                   let state = self.shared.state.lock().unwrap();
+                   match state.loopback.iter().find(|d| d.id == full) {
+                       Some(device) => device.clone(),
+                       None => {
+                           return Err(BackendError::new(
+                               BackendErrorKind::DeviceNotAvailable,
+                               format!("No output device with ID {raw:?}"),
+                           ));
+                       }
+                   }
+               }
+           };
+           Ok(Box::new(FakeOpenDevice {
+               backend: self.clone(),
+               info,
+           }))
+       }
+   ```
+
+   Importe `DeviceRef` (`use super::DeviceRef;`).
 
 **Verificação:**
+
 - `cd crates/handy-recorder && cargo test --features test-backend` passa,
   incluindo `parses_each_direction`.
 - `cd src-tauri && cargo check` passa.
@@ -424,6 +450,7 @@ devolve as saídas de verdade.
    ```
 3. Adicione, perto das outras funções livres (`is_monitor`,
    `channels_without_opening`):
+
    ```rust
    /// Which list `enumerate` builds.
    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -484,10 +511,12 @@ devolve as saídas de verdade.
        }
    }
    ```
+
    Se o compilador reclamar que `isOperatingSystemAtLeastVersion` é
    `unsafe`, envolva a chamada em `unsafe { … }` com um comentário
    `// SAFETY: reads the OS version; no preconditions.`. Se reclamar do tipo
    dos campos (`NSInteger`), use `major as _`.
+
 4. **Reescreva `enumerate`** para receber a direção. Troque a função inteira
    por:
    ```rust
@@ -567,6 +596,7 @@ devolve as saídas de verdade.
    `list_input_devices` e duas em `open_device`. A T5 reescreve o
    `open_device`, mas ele tem que compilar agora.
 6. Troque as duas implementações provisórias da T3 por:
+
    ```rust
        fn list_loopback_devices(&self) -> Result<Vec<InputDevice>, BackendError> {
            if !self.loopback_supported() {
@@ -583,6 +613,7 @@ devolve as saídas de verdade.
            os_supports_loopback()
        }
    ```
+
 7. Estenda o teste de hardware `lists_and_resolves_real_devices` (no fim do
    arquivo, `#[ignore]`) com, **antes** da linha `let default = …`:
    ```rust
@@ -601,6 +632,7 @@ devolve as saídas de verdade.
    Por enquanto ele não abre os devices de loopback. A T5 inclui isso.
 
 **Verificação:**
+
 - `cargo test --features test-backend` na crate passa.
 - No Windows: `cargo test --features test-backend -- --ignored --nocapture lists_and_resolves_real_devices`
   imprime as linhas `[loopback]` com as saídas da máquina (alto-falantes,
@@ -717,6 +749,7 @@ saída.
    ```
 
 **Verificação:**
+
 - `cargo test --features test-backend` na crate passa (os testes de mic não
   podem quebrar).
 - No Windows: o teste `--ignored` imprime um `format=` para cada saída.
@@ -789,6 +822,7 @@ silêncio.
    `keepalive,`.
 
 **Verificação:**
+
 - `cargo test --features test-backend` na crate passa.
 - `cd src-tauri && cargo check` passa no Windows **e** compila no macOS (se
   houver um Mac à mão; se não, revise que todo uso de `keepalive` e de
@@ -963,6 +997,7 @@ Atualize o `FORK.md` com `src/capture/engine.rs`.
        assert!(stopped.is_complete());
    }
    ```
+
    Se algum helper tiver outro nome ou outra assinatura em `support.rs`,
    **adapte o teste ao helper** e não mude o helper. Se o
    `fake.list_input_devices()` não compilar, falta o `use crate::backend::Backend;`.
@@ -1020,6 +1055,7 @@ e corrija os avisos **nos arquivos que você tocou**.
    `"selected_output_device": null,` ~linha 1615). **Não** acrescente os
    campos novos nele: ele prova que um settings antigo, sem eles, ainda
    carrega. Adicione no `mod tests` do mesmo arquivo:
+
    ```rust
    #[test]
    fn input_source_defaults_to_microphone() {
@@ -1036,6 +1072,7 @@ e corrija os avisos **nos arquivos que você tocou**.
        );
    }
    ```
+
    Se `AppSettings` não desserializar de `{}` (algum campo sem
    `#[serde(default)]`), troque o primeiro teste por um que parta do JSON
    antigo já existente no arquivo e cheque os dois campos. Veja como o teste
@@ -1064,6 +1101,7 @@ uma função pura testável.
    ```
 2. **Erro do Handy.** Logo **depois** de `fn recording_notice_code` (fim do
    bloco), adicione:
+
    ```rust
    /// A recording source Handy can't open, decided before the recorder is
    /// asked. `handy_recorder::Error` can't be built outside the crate.
@@ -1089,9 +1127,11 @@ uma função pura testável.
 
    impl std::error::Error for CaptureSourceError {}
    ```
+
 3. **Troque os tipos.** Substitua o bloco inteiro de
    `enum DesiredMicrophone { … }` **e** de `struct MicrophoneResolution { … }`
    (com os doc comments) por:
+
    ```rust
    /// The device the settings ask for now. Clamshell and regular selections
    /// stay distinct so losing a clamshell-only device does not erase the
@@ -1170,6 +1210,7 @@ uma função pura testável.
        unavailable: Option<(InputSource, String)>,
    }
    ```
+
 4. **Função pura.** Logo depois desses tipos, adicione:
    ```rust
    /// Picks the device for `desired` from a listing of its kind (microphones,
@@ -1257,6 +1298,7 @@ uma função pura testável.
    ```
 8. **`resolve_microphone_device` vira `resolve_device`.** Substitua o método
    inteiro por:
+
    ```rust
        fn resolve_device(
            &self,
@@ -1316,8 +1358,10 @@ uma função pura testável.
            Ok(resolution)
        }
    ```
+
    O `.lock().unwrap()` em mutex já existe no arquivo inteiro. Mantenha o
    padrão, porque esta regra do projeto vale para erros, não para locks.
+
 9. **`persist_default_microphone_after_fallback` vira
    `persist_default_after_fallback`:**
    ```rust
@@ -1362,6 +1406,7 @@ uma função pura testável.
               }
       ```
 11. **Testes** no `mod tests` do arquivo:
+
     ```rust
     fn entry(id: &str, name: &str, is_default: bool) -> DeviceEntry {
         DeviceEntry { id: id.into(), name: name.into(), is_default }
@@ -1429,6 +1474,7 @@ uma função pura testável.
     ```
 
 **Verificação:**
+
 - `cd src-tauri && cargo test managers::audio` passa (os testes novos e os
   antigos).
 - `cargo check` passa.
@@ -1450,6 +1496,7 @@ fonte está aberta e qual foi a da última gravação.
 
 1. **Codificação atômica.** Logo depois de `const EARSHOT_VAD_THRESHOLD`,
    adicione:
+
    ```rust
    /// `InputSource` in an atomic, so hot paths read it without a lock.
    fn source_to_u8(source: InputSource) -> u8 {
@@ -1467,8 +1514,10 @@ fonte está aberta e qual foi a da última gravação.
        }
    }
    ```
+
    E no `use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};`,
    acrescente `AtomicU8`.
+
 2. **`OpenMicrophone`** ganha um campo:
    ```rust
        /// What this recorder records: a microphone, or a sound card output.
@@ -1528,6 +1577,7 @@ fonte está aberta e qual foi a da última gravação.
    (O parâmetro da função se chama `microphone: &OpenMicrophone`. Confira o
    nome.)
 6. **Getters públicos**, perto de `pub fn last_input_silent`:
+
    ```rust
        /// The open (or last opened) stream records a sound card output.
        pub fn capturing_system_output(&self) -> bool {
@@ -1643,6 +1693,7 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
 2. **Traduções.** Em `src/i18n/locales/en/translation.json`, no objeto
    `"errors"` da **raiz** (o que contém `"noInputDeviceTitle"`), adicione
    depois de `"microphoneSilent": "…",`:
+
    ```json
        "noOutputDeviceTitle": "No Output Device",
        "noOutputDevice": "There is no speaker or headphone output to record. Connect one, or switch back to the microphone in Settings.",
@@ -1654,6 +1705,7 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
        "systemAudioUnsupportedTitle": "System Audio Not Supported",
        "systemAudioUnsupported": "Recording what your computer plays needs Windows, or macOS 14.6 or later. Switch back to the microphone in Settings.",
    ```
+
    Os títulos cabem no overlay (≤ 215px a 12px): os três têm menos de 30
    caracteres.
 
@@ -1662,29 +1714,40 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
    [Apêndice A](#apêndice-a-script-para-adicionar-chaves-a-todos-os-locales),
    com estes valores (`pt` traduzido, os outros em inglês, que a comunidade
    traduz depois):
+
    ```ts
    const EN = {
      "errors.noOutputDeviceTitle": "No Output Device",
-     "errors.noOutputDevice": "There is no speaker or headphone output to record. Connect one, or switch back to the microphone in Settings.",
+     "errors.noOutputDevice":
+       "There is no speaker or headphone output to record. Connect one, or switch back to the microphone in Settings.",
      "errors.systemAudioSilentTitle": "Nothing Was Playing",
-     "errors.systemAudioSilent.generic": "Handy recorded your sound output, but nothing was playing.",
-     "errors.systemAudioSilent.macos": "Handy recorded your sound output, but nothing was playing. If something was, allow Handy in System Settings → Privacy & Security → System Audio Recording.",
+     "errors.systemAudioSilent.generic":
+       "Handy recorded your sound output, but nothing was playing.",
+     "errors.systemAudioSilent.macos":
+       "Handy recorded your sound output, but nothing was playing. If something was, allow Handy in System Settings → Privacy & Security → System Audio Recording.",
      "errors.systemAudioUnsupportedTitle": "System Audio Not Supported",
-     "errors.systemAudioUnsupported": "Recording what your computer plays needs Windows, or macOS 14.6 or later. Switch back to the microphone in Settings.",
+     "errors.systemAudioUnsupported":
+       "Recording what your computer plays needs Windows, or macOS 14.6 or later. Switch back to the microphone in Settings.",
    };
    const PT = {
      "errors.noOutputDeviceTitle": "Nenhuma Saída de Áudio",
-     "errors.noOutputDevice": "Não há alto-falante ou fone para gravar. Conecte um, ou volte para o microfone nas Configurações.",
+     "errors.noOutputDevice":
+       "Não há alto-falante ou fone para gravar. Conecte um, ou volte para o microfone nas Configurações.",
      "errors.systemAudioSilentTitle": "Nada Estava Tocando",
-     "errors.systemAudioSilent.generic": "O Handy gravou a saída de som, mas nada estava tocando.",
-     "errors.systemAudioSilent.macos": "O Handy gravou a saída de som, mas nada estava tocando. Se algo estava, permita o Handy em Ajustes do Sistema → Privacidade e Segurança → Gravação de Áudio do Sistema.",
+     "errors.systemAudioSilent.generic":
+       "O Handy gravou a saída de som, mas nada estava tocando.",
+     "errors.systemAudioSilent.macos":
+       "O Handy gravou a saída de som, mas nada estava tocando. Se algo estava, permita o Handy em Ajustes do Sistema → Privacidade e Segurança → Gravação de Áudio do Sistema.",
      "errors.systemAudioUnsupportedTitle": "Áudio do Sistema Indisponível",
-     "errors.systemAudioUnsupported": "Gravar o que o computador toca exige Windows, ou macOS 14.6 ou mais novo. Volte para o microfone nas Configurações.",
+     "errors.systemAudioUnsupported":
+       "Gravar o que o computador toca exige Windows, ou macOS 14.6 ou mais novo. Volte para o microfone nas Configurações.",
    };
    ```
+
    Rode o script **também** para o `en`. Se as chaves já existirem, ele não
    as sobrescreve, e o resultado é o mesmo. Depois rode
    `bun run format:frontend`.
+
 3. **`src/lib/notices.ts`**, no `NOTICE_DISPLAY`, depois de `MicrophoneSilent: {…},`:
    ```ts
      NoOutputDevice: {
@@ -1708,6 +1771,7 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
    `| "NoOutputDevice" | "SystemAudioSilent" | "SystemAudioUnsupported"` ao
    `export type NoticeCode = …`.)
 4. **`recording_notice_code`** em `managers/audio.rs`: substitua a função por:
+
    ```rust
    /// The notice for a recording that couldn't start. `source` is what the
    /// settings asked for: no stream may have opened.
@@ -1737,11 +1801,13 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
        }
    }
    ```
+
    Nos testes existentes do arquivo, troque `recording_notice_code(&wrapped)`
    por `recording_notice_code(&wrapped, InputSource::Microphone)` e
    `recording_notice_code(&anyhow::anyhow!("Already recording"))` por
    `recording_notice_code(&anyhow::anyhow!("Already recording"), InputSource::Microphone)`.
    Adicione:
+
    ```rust
    #[test]
    fn capture_source_errors_map_to_their_notices() {
@@ -1767,6 +1833,7 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
        );
    }
    ```
+
 5. **`actions.rs`**:
    - Na chamada `Notice::new(recording_notice_code(&err), NoticeSource::Dictation)`,
      passe a fonte: `recording_notice_code(&err, rm.desired_source())`. Ache
@@ -1816,6 +1883,7 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
      dentro do mesmo bloco.
 
 **Verificação:**
+
 - `bun run check:translations` passa.
 - `cd src-tauri && cargo test` passa.
 - `grep -rn "systemAudioSilentTitle" src/i18n/locales | wc -l` mostra
@@ -1835,6 +1903,7 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
 1. Em `commands/audio.rs`, ajuste o import das settings:
    `use crate::settings::{get_settings, write_settings, InputSource};`.
 2. Adicione, depois de `get_selected_microphone`:
+
    ```rust
    #[tauri::command]
    #[specta::specta]
@@ -1921,6 +1990,7 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
            .unwrap_or_else(|| "default".to_string()))
    }
    ```
+
 3. Em `lib.rs`, dentro de `collect_commands![ … ]`, logo depois de
    `commands::audio::get_selected_microphone,`, adicione:
    ```rust
@@ -1953,6 +2023,7 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
    mão e precisa ser regenerado.
 
 **Verificação:**
+
 - `cd src-tauri && cargo check` e `bun run build` passam.
 - No app em dev, abra o devtools (Ctrl+Shift+I) e rode
   `await window.__TAURI_INTERNALS__.invoke("get_available_loopback_devices")`.
@@ -1978,8 +2049,8 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
    ```
    E depois de `refreshOutputDevices: () => Promise<void>;`:
    ```ts
-     refreshLoopbackDevices: () => Promise<void>;
-     loadLoopbackSupported: () => Promise<void>;
+   refreshLoopbackDevices: () => Promise<void>;
+   loadLoopbackSupported: () => Promise<void>;
    ```
 2. No objeto de updaters (onde está `selected_microphone: (value) =>`),
    adicione:
@@ -2007,6 +2078,7 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
    ```
 5. Depois da ação `refreshOutputDevices: async () => { … },`, adicione
    (copiando a estrutura de `refreshAudioDevices`):
+
    ```ts
        // Load the outputs that can be recorded (loopback)
        refreshLoopbackDevices: async () => {
@@ -2038,16 +2110,18 @@ três códigos: `SystemAudioSilent` (Warning), `NoOutputDevice` (Error) e
          }
        },
    ```
+
    (Se o `bindings.ts` gerar `isLoopbackSupported` como `Result`, trate como
    em `refreshAudioDevices`: `result.status === "ok" ? result.data : false`.)
+
 6. Em `initialize`, dentro do `await Promise.all([ … ])`, acrescente
    `get().refreshLoopbackDevices(),` e `get().loadLoopbackSupported(),`.
    Copie o formato dos itens que já estão lá.
 7. No listener `settings-changed`, depois do `if` de `selected_microphone`:
    ```ts
-           if (event.payload.setting === "selected_loopback_device") {
-             get().refreshLoopbackDevices();
-           }
+   if (event.payload.setting === "selected_loopback_device") {
+     get().refreshLoopbackDevices();
+   }
    ```
 
 **Passos (`useSettings.ts`):** copie como `audioDevices` e
@@ -2093,23 +2167,29 @@ mesma forma.
    ```ts
    const EN = {
      "settings.sound.inputSource.title": "Input Source",
-     "settings.sound.inputSource.description": "Record from a microphone, or from what your computer is playing",
+     "settings.sound.inputSource.description":
+       "Record from a microphone, or from what your computer is playing",
      "settings.sound.inputSource.microphone": "Microphone",
      "settings.sound.inputSource.systemOutput": "System Output",
-     "settings.sound.inputSource.unsupported": "Recording what your computer plays needs macOS 14.6 or later",
+     "settings.sound.inputSource.unsupported":
+       "Recording what your computer plays needs macOS 14.6 or later",
      "settings.sound.systemOutput.title": "Output to Record",
-     "settings.sound.systemOutput.description": "Which speakers or headphones to record",
+     "settings.sound.systemOutput.description":
+       "Which speakers or headphones to record",
      "settings.sound.systemOutput.placeholder": "Select output...",
      "settings.sound.systemOutput.loading": "Loading...",
    };
    const PT = {
      "settings.sound.inputSource.title": "Fonte de Entrada",
-     "settings.sound.inputSource.description": "Gravar de um microfone, ou do que o computador está tocando",
+     "settings.sound.inputSource.description":
+       "Gravar de um microfone, ou do que o computador está tocando",
      "settings.sound.inputSource.microphone": "Microfone",
      "settings.sound.inputSource.systemOutput": "Saída do Sistema",
-     "settings.sound.inputSource.unsupported": "Gravar o que o computador toca exige macOS 14.6 ou mais novo",
+     "settings.sound.inputSource.unsupported":
+       "Gravar o que o computador toca exige macOS 14.6 ou mais novo",
      "settings.sound.systemOutput.title": "Saída a Gravar",
-     "settings.sound.systemOutput.description": "Quais alto-falantes ou fones gravar",
+     "settings.sound.systemOutput.description":
+       "Quais alto-falantes ou fones gravar",
      "settings.sound.systemOutput.placeholder": "Selecione a saída...",
      "settings.sound.systemOutput.loading": "Carregando...",
    };
@@ -2118,6 +2198,7 @@ mesma forma.
    locales. O script cria os objetos que faltarem.
 2. **`InputSourceSelector.tsx`**: use o `MicrophoneSelector.tsx` como modelo
    de imports, props e `React.memo`:
+
    ```tsx
    import React from "react";
    import { useTranslation } from "react-i18next";
@@ -2135,13 +2216,24 @@ mesma forma.
    export const InputSourceSelector: React.FC<InputSourceSelectorProps> =
      React.memo(({ descriptionMode = "tooltip", grouped = false }) => {
        const { t } = useTranslation();
-       const { getSetting, updateSetting, isUpdating, isLoading, loopbackSupported } =
-         useSettings();
+       const {
+         getSetting,
+         updateSetting,
+         isUpdating,
+         isLoading,
+         loopbackSupported,
+       } = useSettings();
        const source: InputSource = getSetting("input_source") ?? "microphone";
 
        const options = [
-         { value: "microphone", label: t("settings.sound.inputSource.microphone") },
-         { value: "system_output", label: t("settings.sound.inputSource.systemOutput") },
+         {
+           value: "microphone",
+           label: t("settings.sound.inputSource.microphone"),
+         },
+         {
+           value: "system_output",
+           label: t("settings.sound.inputSource.systemOutput"),
+         },
        ];
 
        return (
@@ -2158,7 +2250,9 @@ mesma forma.
            <Dropdown
              options={options}
              selectedValue={source}
-             onSelect={(value) => updateSetting("input_source", value as InputSource)}
+             onSelect={(value) =>
+               updateSetting("input_source", value as InputSource)
+             }
              disabled={
                isLoading ||
                isUpdating("input_source") ||
@@ -2170,9 +2264,11 @@ mesma forma.
        );
      });
    ```
+
    **Confira as props reais do `Dropdown`** em `src/components/ui/Dropdown.tsx`
    e ajuste (por exemplo, se `placeholder` for obrigatório, passe
    `t("settings.sound.inputSource.title")`). Não mude o `Dropdown`.
+
 3. **`SystemOutputSelector.tsx`**: copie o `MicrophoneSelector.tsx` inteiro
    e troque:
    - `MicrophoneDropdown` → `SystemOutputDropdown` (componente interno, não
@@ -2199,21 +2295,24 @@ mesma forma.
    ```
    por
    ```tsx
-           <InputSourceSelector descriptionMode="tooltip" grouped={true} />
-           {inputSource === "system_output" ? (
-             <SystemOutputSelector descriptionMode="tooltip" grouped={true} />
-           ) : (
-             <>
-               <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
-               <ChannelSelector descriptionMode="tooltip" grouped={true} />
-               <MuteWhileRecording descriptionMode="tooltip" grouped={true} />
-             </>
-           )}
+   <InputSourceSelector descriptionMode="tooltip" grouped={true} />;
+   {
+     inputSource === "system_output" ? (
+       <SystemOutputSelector descriptionMode="tooltip" grouped={true} />
+     ) : (
+       <>
+         <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
+         <ChannelSelector descriptionMode="tooltip" grouped={true} />
+         <MuteWhileRecording descriptionMode="tooltip" grouped={true} />
+       </>
+     );
+   }
    ```
    **Não** mexa em `AudioFeedback`, `OutputDeviceSelector` e `VolumeSlider`.
    **Não** mexa no onboarding (`TryIt.tsx`) nem no `DebugSettings`.
 
 **Verificação:**
+
 - `bun run lint` (sem string hardcoded em JSX), `bun run build` e
   `bun run check:translations` passam.
 - No app em dev: Settings → General → Sound mostra "Input Source". Trocar
@@ -2232,10 +2331,12 @@ mesma forma.
 **Arquivo:** `src-tauri/Info.plist`.
 
 **Passo:** dentro do `<dict>`, depois do par `NSMicrophoneUsageDescription`:
+
 ```xml
   <key>NSAudioCaptureUsageDescription</key>
   <string>Record what your Mac is playing so it can be transcribed locally</string>
 ```
+
 Não mexa no `Entitlements.plist` nesta task (design §6 e spec R2: só se o
 teste num build assinado falhar).
 
@@ -2261,21 +2362,22 @@ teste num build assinado falhar).
 2. **Teste manual.** Siga a matriz da [spec §6](spec.md#6-critérios-de-aceite)
    e anote passou/falhou para cada critério:
 
-   | # | Como testar |
-   |---|---|
-   | 1 | Windows, Saída do sistema + "Default". Toque um vídeo com fala no navegador e use o atalho por ~5 s. O texto é colado. |
-   | 2 | Windows, nada tocando, segure o atalho por **20 s**. Não aparece erro de gravação; ao soltar aparece "Nothing Was Playing". |
-   | 3 | Windows, escolha um fone USB em "Output to Record" e toque o vídeo **nos alto-falantes**: o texto sai vazio. Toque **no fone**: o texto sai. |
-   | 4 | macOS 14.6+, alto-falantes internos, como o 1. No primeiro uso aparece o pedido de "System Audio Recording". |
-   | 5 | macOS < 14.6 (ou VM): a opção aparece desabilitada, com a explicação. |
-   | 6 | Ligue "Mute while recording" no modo microfone, troque para Saída do sistema e grave um vídeo: o som **não** é mutado e o texto sai. |
-   | 7 | Com os sons de aviso ligados, grave a saída: os sons não tocam e o texto não traz o "plim". |
-   | 8 | Volte para Microfone: o mic de antes está selecionado e funciona. |
-   | 9 | Numa placa com mic e saída de mesmo nome (Realtek), selecione a saída e grave: vem o som da saída, não do mic. |
-   | 10 | Ligue "Always-on microphone" (Advanced), troque de fonte várias vezes: cada troca vale na hora, sem reiniciar. |
+   | #   | Como testar                                                                                                                                  |
+   | --- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+   | 1   | Windows, Saída do sistema + "Default". Toque um vídeo com fala no navegador e use o atalho por ~5 s. O texto é colado.                       |
+   | 2   | Windows, nada tocando, segure o atalho por **20 s**. Não aparece erro de gravação; ao soltar aparece "Nothing Was Playing".                  |
+   | 3   | Windows, escolha um fone USB em "Output to Record" e toque o vídeo **nos alto-falantes**: o texto sai vazio. Toque **no fone**: o texto sai. |
+   | 4   | macOS 14.6+, alto-falantes internos, como o 1. No primeiro uso aparece o pedido de "System Audio Recording".                                 |
+   | 5   | macOS < 14.6 (ou VM): a opção aparece desabilitada, com a explicação.                                                                        |
+   | 6   | Ligue "Mute while recording" no modo microfone, troque para Saída do sistema e grave um vídeo: o som **não** é mutado e o texto sai.         |
+   | 7   | Com os sons de aviso ligados, grave a saída: os sons não tocam e o texto não traz o "plim".                                                  |
+   | 8   | Volte para Microfone: o mic de antes está selecionado e funciona.                                                                            |
+   | 9   | Numa placa com mic e saída de mesmo nome (Realtek), selecione a saída e grave: vem o som da saída, não do mic.                               |
+   | 10  | Ligue "Always-on microphone" (Advanced), troque de fonte várias vezes: cada troca vale na hora, sem reiniciar.                               |
 
    Para cada falha, abra o log em debug (`--debug` ou Ctrl+Shift+D) e
    procure `loopback`, `device resolve` e `keepalive`.
+
 3. **PR.** Leia `.github/PULL_REQUEST_TEMPLATE.md` e siga **todas** as seções
    (AGENTS.md: obrigatório). Na "Human Written Description", deixe
    `TODO: (humano) descrever com suas palavras` e peça ao humano para
@@ -2317,7 +2419,8 @@ for (const locale of readdirSync(LOCALES)) {
     const parts = dotted.split(".");
     let node = json;
     for (const part of parts.slice(0, -1)) {
-      if (typeof node[part] !== "object" || node[part] === null) node[part] = {};
+      if (typeof node[part] !== "object" || node[part] === null)
+        node[part] = {};
       node = node[part];
     }
     const leaf = parts[parts.length - 1];
@@ -2332,6 +2435,7 @@ for (const locale of readdirSync(LOCALES)) {
 ```
 
 Depois de rodar:
+
 1. `bun run format:frontend`, para o Prettier normalizar os JSONs.
 2. `git diff --stat src/i18n`: os 29 arquivos mudaram e só com linhas
    adicionadas. Se algum mostrar linhas **removidas** além da

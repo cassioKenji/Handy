@@ -194,22 +194,22 @@ fn enumerate(host: &cpal::Host, dir: Direction, with_channels: bool)
 
 `loopback_capable(device)`:
 
-| Plataforma | Regra |
-|---|---|
-| Windows | sempre `true` |
-| macOS | `device.default_input_config().is_err()`: só devices **sem** entrada. Com entrada, o cpal abriria o mic (`supports_input()`; spec R1) |
-| Linux / outros | `false`. A lista sai vazia na v1 |
+| Plataforma     | Regra                                                                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows        | sempre `true`                                                                                                                         |
+| macOS          | `device.default_input_config().is_err()`: só devices **sem** entrada. Com entrada, o cpal abriria o mic (`supports_input()`; spec R1) |
+| Linux / outros | `false`. A lista sai vazia na v1                                                                                                      |
 
 O `list_loopback_devices()` do backend retorna `Ok(vec![])` direto quando
 `!self.loopback_supported()`, sem enumerar nada.
 
 #### `loopback_supported()`
 
-| Plataforma | Implementação |
-|---|---|
-| Windows | `true` |
-| macOS | `NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion({14, 6, 0})`. Precisa de `objc2-foundation` com a feature `NSProcessInfo` como dep macOS da crate (o Handy já usa `objc2-foundation 0.3`) |
-| Linux | `false` |
+| Plataforma | Implementação                                                                                                                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows    | `true`                                                                                                                                                                                                  |
+| macOS      | `NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion({14, 6, 0})`. Precisa de `objc2-foundation` com a feature `NSProcessInfo` como dep macOS da crate (o Handy já usa `objc2-foundation 0.3`) |
+| Linux      | `false`                                                                                                                                                                                                 |
 
 Calcular uma vez e guardar num `OnceLock<bool>`.
 
@@ -285,10 +285,10 @@ para o loopback, que roda no mesmo ramo `#[cfg(windows)]`.
 
 Três pontos usam a permissão de **microfone**. No loopback ela não se aplica:
 
-| Linha (0.1.1) | Hoje | Com loopback |
-|---|---|---|
-| `open` ~631 | `denial_is_silent && Denied` → `PermissionDenied` | pular se `info.kind == Loopback` |
-| `Engine::start` ~381 | permissão revogada com o stream aberto → `start` falha | pular se for loopback |
+| Linha (0.1.1)        | Hoje                                                        | Com loopback                                             |
+| -------------------- | ----------------------------------------------------------- | -------------------------------------------------------- |
+| `open` ~631          | `denial_is_silent && Denied` → `PermissionDenied`           | pular se `info.kind == Loopback`                         |
+| `Engine::start` ~381 | permissão revogada com o stream aberto → `start` falha      | pular se for loopback                                    |
 | `runtime_error` ~601 | erro de stream no Windows + mic negado → `PermissionDenied` | o mic negado não explica a falha: manter o kind original |
 
 No `open_stream`, o `info` já existe. O `Engine::start` e o `runtime_error`
@@ -489,10 +489,10 @@ partir do `InputDevice`.
 `persist_default_microphone_after_fallback(name)` passa a ser
 `persist_default_after_fallback(kind, name)`:
 
-| kind | setting zerado | evento `settings-changed` |
-|---|---|---|
-| Microphone | `selected_microphone` | `{setting:"selected_microphone", value:"Default"}` |
-| Loopback | `selected_loopback_device` | `{setting:"selected_loopback_device", value:"Default"}` |
+| kind       | setting zerado             | evento `settings-changed`                               |
+| ---------- | -------------------------- | ------------------------------------------------------- |
+| Microphone | `selected_microphone`      | `{setting:"selected_microphone", value:"Default"}`      |
+| Loopback   | `selected_loopback_device` | `{setting:"selected_loopback_device", value:"Default"}` |
 
 A guarda continua a mesma: só zera se o setting atual ainda for `name`.
 
@@ -549,10 +549,10 @@ if !settings.mute_while_recording || self.capturing_system_output() { return; }
 
 Sons de aviso, em `actions.rs`. Eles tocam em dois lugares:
 
-| Linha | Hoje | Novo |
-|---|---|---|
+| Linha                             | Hoje                                  | Novo                                     |
+| --------------------------------- | ------------------------------------- | ---------------------------------------- |
 | ~664 (start, depois da readiness) | `play_feedback_sound_blocking(Start)` | `if !rm.capturing_system_output() { … }` |
-| ~736 (stop) | `play_feedback_sound(Stop)` | idem |
+| ~736 (stop)                       | `play_feedback_sound(Stop)`           | idem                                     |
 
 O `play_test_sound` em Settings não muda: ele não grava nada.
 
@@ -565,11 +565,11 @@ quem conhece a sessão é o `actions.rs`.
 
 Novos `NoticeCode`, seguindo o passo a passo do AGENTS.md:
 
-| Code | Level | Quando | Título (en) |
-|---|---|---|---|
-| `SystemAudioSilent` | Warning | gravação loopback que só teve zeros | "Nothing Was Playing" |
-| `NoOutputDevice` | Error | loopback sem device / device sumiu sem fallback | "No Output Device" |
-| `SystemAudioUnsupported` | Error | `UnsupportedConfig` em loopback (macOS < 14.6, chamado pela CLI ou por um setting antigo) | "System Audio Not Supported" |
+| Code                     | Level   | Quando                                                                                    | Título (en)                  |
+| ------------------------ | ------- | ----------------------------------------------------------------------------------------- | ---------------------------- |
+| `SystemAudioSilent`      | Warning | gravação loopback que só teve zeros                                                       | "Nothing Was Playing"        |
+| `NoOutputDevice`         | Error   | loopback sem device / device sumiu sem fallback                                           | "No Output Device"           |
+| `SystemAudioUnsupported` | Error   | `UnsupportedConfig` em loopback (macOS < 14.6, chamado pela CLI ou por um setting antigo) | "System Audio Not Supported" |
 
 Explicações (`errors.<name>` sem o sufixo `Title`):
 
@@ -758,15 +758,15 @@ sufixo `Title`.
 
 ## 7. Erros: tabela de ponta a ponta
 
-| Situação | Onde nasce | `ErrorKind` | Notice |
-|---|---|---|---|
-| Nenhuma saída listada | `resolve_device` | `DeviceUnavailable` | `NoOutputDevice` |
-| A saída escolhida sumiu | `resolve_device` | (fallback para a padrão + setting zerado) | nenhum |
-| A saída sumiu durante a gravação | watchdog / cpal | `DeviceUnavailable` | `RecordingFailed` (o áudio já gravado é mantido) |
-| macOS < 14.6 com setting antigo | `open_device` | `UnsupportedConfig` | `SystemAudioUnsupported` |
-| O keepalive falhou e nada tocou | watchdog | `NoAudio` / `Stalled` | `RecordingFailed` |
-| Endpoint em modo exclusivo (Windows) | `build_input_stream` | `DeviceBusy` | `RecordingFailed` |
-| Permissão de áudio do sistema negada (macOS) | (silêncio) | — | `SystemAudioSilent` |
+| Situação                                     | Onde nasce           | `ErrorKind`                               | Notice                                           |
+| -------------------------------------------- | -------------------- | ----------------------------------------- | ------------------------------------------------ |
+| Nenhuma saída listada                        | `resolve_device`     | `DeviceUnavailable`                       | `NoOutputDevice`                                 |
+| A saída escolhida sumiu                      | `resolve_device`     | (fallback para a padrão + setting zerado) | nenhum                                           |
+| A saída sumiu durante a gravação             | watchdog / cpal      | `DeviceUnavailable`                       | `RecordingFailed` (o áudio já gravado é mantido) |
+| macOS < 14.6 com setting antigo              | `open_device`        | `UnsupportedConfig`                       | `SystemAudioUnsupported`                         |
+| O keepalive falhou e nada tocou              | watchdog             | `NoAudio` / `Stalled`                     | `RecordingFailed`                                |
+| Endpoint em modo exclusivo (Windows)         | `build_input_stream` | `DeviceBusy`                              | `RecordingFailed`                                |
+| Permissão de áudio do sistema negada (macOS) | (silêncio)           | —                                         | `SystemAudioSilent`                              |
 
 ---
 
@@ -794,15 +794,15 @@ HDMI). No macOS < 14.6, só a opção desabilitada.
 
 ## 9. Decisões e alternativas descartadas
 
-| Decisão | Alternativa | Por que não |
-|---|---|---|
-| Prefixo `loopback:` no id | campo `kind` em `RecorderConfig` | o UID do CoreAudio é o mesmo nas duas direções, e o Handy cacheia ids como string |
-| Keepalive silencioso | relaxar o watchdog para loopback | sem callbacks também não há readiness, e o overlay ficaria esperando o primeiro chunk |
-| Kind do recorder aberto como fonte da verdade | ler `settings.input_source` | a troca de setting no meio da gravação deixaria mute/sons/notices incoerentes |
-| `resolve_device` falha sem loopback | cair no mic padrão | gravaria o microfone sem o usuário saber |
-| Suprimir os sons de aviso nas chamadas | dentro de `audio_feedback` | `audio_feedback` não conhece a sessão, e o teste de som tem que continuar tocando |
-| Persistir nomes | persistir ids | o padrão do app é guardar nomes, e o id do WASAPI muda com o driver |
-| Excluir no macOS os devices com entrada | patch no `handy-cpal` | mantém o cpal intocado na v1 (spec R1) |
+| Decisão                                       | Alternativa                      | Por que não                                                                           |
+| --------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------- |
+| Prefixo `loopback:` no id                     | campo `kind` em `RecorderConfig` | o UID do CoreAudio é o mesmo nas duas direções, e o Handy cacheia ids como string     |
+| Keepalive silencioso                          | relaxar o watchdog para loopback | sem callbacks também não há readiness, e o overlay ficaria esperando o primeiro chunk |
+| Kind do recorder aberto como fonte da verdade | ler `settings.input_source`      | a troca de setting no meio da gravação deixaria mute/sons/notices incoerentes         |
+| `resolve_device` falha sem loopback           | cair no mic padrão               | gravaria o microfone sem o usuário saber                                              |
+| Suprimir os sons de aviso nas chamadas        | dentro de `audio_feedback`       | `audio_feedback` não conhece a sessão, e o teste de som tem que continuar tocando     |
+| Persistir nomes                               | persistir ids                    | o padrão do app é guardar nomes, e o id do WASAPI muda com o driver                   |
+| Excluir no macOS os devices com entrada       | patch no `handy-cpal`            | mantém o cpal intocado na v1 (spec R1)                                                |
 
 ## 10. Questões abertas
 

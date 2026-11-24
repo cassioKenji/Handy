@@ -31,12 +31,12 @@ implementação.
 
 ## 3. Documentos (nesta pasta)
 
-| Arquivo | O que é | Quando usar |
-|---|---|---|
-| [spec.md](spec.md) | **O quê**: comportamento, escopo e critérios de aceite (§6) | Para saber se está pronto |
+| Arquivo                | O que é                                                           | Quando usar                         |
+| ---------------------- | ----------------------------------------------------------------- | ----------------------------------- |
+| [spec.md](spec.md)     | **O quê**: comportamento, escopo e critérios de aceite (§6)       | Para saber se está pronto           |
 | [design.md](design.md) | **Como**: arquitetura, tipos, fluxos e decisões com o porquê (§9) | Para entender o porquê de cada task |
-| [tasks.md](tasks.md) | **Passo a passo**: 18 tasks com código, verificação e commit | **O que você executa** |
-| handoff.md | Este arquivo: contexto, ambiente Windows e armadilhas | Primeiro |
+| [tasks.md](tasks.md)   | **Passo a passo**: 18 tasks com código, verificação e commit      | **O que você executa**              |
+| handoff.md             | Este arquivo: contexto, ambiente Windows e armadilhas             | Primeiro                            |
 
 **Precedência** em caso de conflito: `handoff.md` > `tasks.md` > `design.md` >
 `spec.md`. Os documentos mais novos foram escritos com mais informação do
@@ -87,13 +87,13 @@ UI (Settings › Sound)  →  settingsStore.ts  →  commands/audio.rs
 
 Confira cada um com o comando ao lado. Não instale nada sem avisar o usuário.
 
-| Ferramenta | Verificar | Instalar |
-|---|---|---|
-| Rust (stable, MSVC) | `rustc -V`, `cargo -V` | https://rustup.rs |
-| Bun | `bun -v` | https://bun.sh |
-| VS Build Tools 2022 com "Desktop development with C++" | `where cl` num "Developer PowerShell" | instalador do Visual Studio |
-| CMake no `PATH` | `cmake --version` | `winget install Kitware.CMake` |
-| Vulkan SDK | `echo $env:VULKAN_SDK` (não vazio) | `winget install KhronosGroup.VulkanSDK`, depois **abra um terminal novo** |
+| Ferramenta                                             | Verificar                             | Instalar                                                                  |
+| ------------------------------------------------------ | ------------------------------------- | ------------------------------------------------------------------------- |
+| Rust (stable, MSVC)                                    | `rustc -V`, `cargo -V`                | https://rustup.rs                                                         |
+| Bun                                                    | `bun -v`                              | https://bun.sh                                                            |
+| VS Build Tools 2022 com "Desktop development with C++" | `where cl` num "Developer PowerShell" | instalador do Visual Studio                                               |
+| CMake no `PATH`                                        | `cmake --version`                     | `winget install Kitware.CMake`                                            |
+| Vulkan SDK                                             | `echo $env:VULKAN_SDK` (não vazio)    | `winget install KhronosGroup.VulkanSDK`, depois **abra um terminal novo** |
 
 ### 5.3 Baseline: confirme que o Handy original compila e roda
 
@@ -118,13 +118,13 @@ Guarde o tempo e o resultado do baseline e informe ao usuário.
 
 As tasks foram escritas com comandos estilo Unix. No PowerShell:
 
-| tasks.md | PowerShell |
-|---|---|
-| `cd src-tauri && cargo test` | `cd src-tauri; cargo test; cd ..` (ou `cargo test --manifest-path src-tauri/Cargo.toml`) |
-| `grep -rn "X" pasta` | `Select-String -Path pasta\* -Pattern "X" -Recurse` ou `git grep -n "X" -- pasta` (**prefira `git grep`**) |
-| `grep … \| wc -l` | `(git grep -l "X" -- src/i18n/locales).Count` |
-| `/tmp/…` | `$env:TEMP\…` |
-| `bun /tmp/add-locale-keys.ts` | `bun $env:TEMP\add-locale-keys.ts` (rodado da raiz do repo) |
+| tasks.md                      | PowerShell                                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `cd src-tauri && cargo test`  | `cd src-tauri; cargo test; cd ..` (ou `cargo test --manifest-path src-tauri/Cargo.toml`)                   |
+| `grep -rn "X" pasta`          | `Select-String -Path pasta\* -Pattern "X" -Recurse` ou `git grep -n "X" -- pasta` (**prefira `git grep`**) |
+| `grep … \| wc -l`             | `(git grep -l "X" -- src/i18n/locales).Count`                                                              |
+| `/tmp/…`                      | `$env:TEMP\…`                                                                                              |
+| `bun /tmp/add-locale-keys.ts` | `bun $env:TEMP\add-locale-keys.ts` (rodado da raiz do repo)                                                |
 
 O `cargo` da crate vendorizada:
 `cargo test --manifest-path crates/handy-recorder/Cargo.toml --features test-backend`.

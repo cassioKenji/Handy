@@ -107,7 +107,7 @@ prefixo.
 
 - **`enumerate_loopback(host)`**, nova: percorre `host.output_devices()`,
   monta `InputDevice { kind: Loopback, id: "loopback:…", is_default: <saída padrão>,
-  channels: default_output_config().channels() }`, com nomes e `occurrence`
+channels: default_output_config().channels() }`, com nomes e `occurrence`
   como no `enumerate` atual.
   - **macOS:** **excluir saídas cujo device também tenha entrada**
     (`default_input_config().is_ok()`, por exemplo interfaces USB e headsets
@@ -168,12 +168,12 @@ pub enum InputSource { #[default] Microphone, SystemOutput }
 
 ### 5.2 Comandos (`src-tauri/src/commands/audio.rs`)
 
-| Comando | Faz |
-|---|---|
+| Comando                                         | Faz                                                                                                              |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `get_input_source` / `set_input_source(source)` | Persiste e chama `rm.update_selected_device()` em `spawn_blocking`, no mesmo padrão de `set_selected_microphone` |
-| `get_available_loopback_devices()` | `handy_recorder::list_loopback_devices()`, com "Default" no topo e a mesma forma de `get_available_microphones` |
-| `get/set_selected_loopback_device(name)` | Igual ao par do microfone |
-| `is_loopback_supported()` | `handy_recorder::loopback_supported()` |
+| `get_available_loopback_devices()`              | `handy_recorder::list_loopback_devices()`, com "Default" no topo e a mesma forma de `get_available_microphones`  |
+| `get/set_selected_loopback_device(name)`        | Igual ao par do microfone                                                                                        |
+| `is_loopback_supported()`                       | `handy_recorder::loopback_supported()`                                                                           |
 
 Registrar tudo em `lib.rs` (`collect_commands!`) e regenerar `bindings.ts`
 rodando o app em debug.
@@ -288,14 +288,14 @@ rodando o app em debug.
 
 ## 8. Riscos e pontos a verificar
 
-| # | Risco | Mitigação |
-|---|---|---|
-| R1 | macOS: saídas de devices que também têm entrada (interfaces USB, headsets) gravariam o mic | Excluir da lista na v1. Na v2, patch no `handy-cpal` para forçar o `LoopbackDevice` |
-| R2 | macOS: permissão de áudio do sistema sem API de status, e entitlements extras desconhecidos | Testar num build assinado. A detecção de silêncio vira o aviso §5.5 |
-| R3 | macOS: o aggregate com tap pode parar de mandar frames em silêncio | Testar o critério 2 no Mac. Se parar, usar o mesmo keepalive do Windows |
-| R4 | Windows: a saída padrão muda durante uma gravação | A v1 continua no device resolvido no open. A troca vale na próxima gravação |
-| R5 | Windows: loopback de devices em modo exclusivo (outros apps) | Erro de open → notice. Fica documentado como limitação |
-| R6 | Merge com versões novas da `handy-recorder` | Commit de cópia isolado, e as mudanças concentradas em `backend/cpal` e `device.rs` |
+| #   | Risco                                                                                       | Mitigação                                                                           |
+| --- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| R1  | macOS: saídas de devices que também têm entrada (interfaces USB, headsets) gravariam o mic  | Excluir da lista na v1. Na v2, patch no `handy-cpal` para forçar o `LoopbackDevice` |
+| R2  | macOS: permissão de áudio do sistema sem API de status, e entitlements extras desconhecidos | Testar num build assinado. A detecção de silêncio vira o aviso §5.5                 |
+| R3  | macOS: o aggregate com tap pode parar de mandar frames em silêncio                          | Testar o critério 2 no Mac. Se parar, usar o mesmo keepalive do Windows             |
+| R4  | Windows: a saída padrão muda durante uma gravação                                           | A v1 continua no device resolvido no open. A troca vale na próxima gravação         |
+| R5  | Windows: loopback de devices em modo exclusivo (outros apps)                                | Erro de open → notice. Fica documentado como limitação                              |
+| R6  | Merge com versões novas da `handy-recorder`                                                 | Commit de cópia isolado, e as mudanças concentradas em `backend/cpal` e `device.rs` |
 
 ## 9. v2 (anotado, não implementar)
 
