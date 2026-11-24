@@ -9,6 +9,18 @@ pub fn list_input_devices() -> Result<Vec<InputDevice>, Error> {
         .map_err(|e| open_error(e, None))
 }
 
+/// What an [`InputDevice`] records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum DeviceKind {
+    /// A microphone or other input.
+    #[default]
+    Microphone,
+    /// A sound card's output, recorded by loopback (WASAPI loopback on
+    /// Windows, a CoreAudio process tap on macOS).
+    Loopback,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct InputDevice {
@@ -28,6 +40,8 @@ pub struct InputDevice {
     /// A PulseAudio monitor source ("Monitor of ..."), not a microphone.
     /// Always false on macOS and Windows.
     pub is_monitor: bool,
+    /// A microphone, or an output recorded by loopback.
+    pub kind: DeviceKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -8,7 +8,7 @@ use super::{
     Backend, BackendError, BackendErrorKind, DataCallback, DeviceFormat, ErrorCallback,
     InputSample, InputStream, OpenDevice,
 };
-use crate::{InputDevice, Permission};
+use crate::{DeviceKind, InputDevice, Permission};
 
 /// One fake device. Clones share state, so a test keeps a clone to drive the
 /// stream a recorder opened.
@@ -78,6 +78,7 @@ impl FakeBackend {
                     id_is_stable: true,
                     channels: Some(format.channels),
                     is_monitor: false,
+                    kind: DeviceKind::Microphone,
                 },
                 format,
                 state: Mutex::default(),

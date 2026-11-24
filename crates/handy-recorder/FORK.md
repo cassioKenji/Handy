@@ -5,3 +5,6 @@ Copied from crates.io (sha256 29602f34…255a). Adds loopback capture
 Design: ../../docs/specs/system-audio-capture/design.md
 
 Files changed from upstream are listed here as they change:
+
+- src/device.rs, src/lib.rs, src/backend/cpal/mod.rs, src/backend/fake.rs
+  (T2: `DeviceKind` and `InputDevice::kind`)

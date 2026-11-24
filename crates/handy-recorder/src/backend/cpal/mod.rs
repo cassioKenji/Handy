@@ -17,7 +17,7 @@ use super::{
     Backend, BackendError, BackendErrorKind, DataCallback, DeviceFormat, ErrorCallback,
     InputSample, InputStream, OpenDevice, SampleFormat,
 };
-use crate::{InputDevice, Permission};
+use crate::{DeviceKind, InputDevice, Permission};
 
 pub(crate) struct CpalBackend {
     id: cpal::HostId,
@@ -169,6 +169,7 @@ fn enumerate(
                     None
                 },
                 is_monitor: monitor,
+                kind: DeviceKind::Microphone,
             },
             device,
         ));
@@ -235,6 +236,7 @@ impl Backend for CpalBackend {
                             is_monitor: id.as_ref().is_some_and(is_monitor),
                             id_is_stable: id.is_some_and(|id| id_is_stable(id.host())),
                             channels: None,
+                            kind: DeviceKind::Microphone,
                         };
                         (info, default)
                     })
