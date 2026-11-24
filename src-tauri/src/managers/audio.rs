@@ -13,7 +13,7 @@ use crate::settings::{get_settings, write_settings, AppSettings, InputSource, Va
 use crate::utils;
 use handy_recorder::{Channels, EndReason, ErrorKind, Recorder, RecorderConfig, StartError};
 use log::{debug, error, info, trace, warn};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
@@ -21,6 +21,22 @@ use tauri::{Emitter, Manager};
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const SILERO_VAD_THRESHOLD: f32 = 0.3;
 const EARSHOT_VAD_THRESHOLD: f32 = 0.5;
+
+/// `InputSource` in an atomic, so hot paths read it without a lock.
+fn source_to_u8(source: InputSource) -> u8 {
+    match source {
+        InputSource::Microphone => 0,
+        InputSource::SystemOutput => 1,
+    }
+}
+
+fn source_from_u8(value: u8) -> InputSource {
+    if value == 1 {
+        InputSource::SystemOutput
+    } else {
+        InputSource::Microphone
+    }
+}
 
 fn set_mute(mute: bool) {
     // Expected behavior:
@@ -406,6 +422,8 @@ struct OpenMicrophone {
     /// Set when this recorder fails. Its own flag, so a failure handler that
     /// runs late can't mark a replacement recorder failed.
     failed: Arc<AtomicBool>,
+    /// What this recorder records: a microphone, or a sound card output.
+    source: InputSource,
 }
 
 impl OpenMicrophone {
@@ -551,7 +569,11 @@ fn open_microphone(config: RecorderConfig) -> Result<OpenMicrophone, handy_recor
         // start; a recording in progress keeps the audio captured before it.
         move |_| failed.store(true, Ordering::Release)
     })?;
-    Ok(OpenMicrophone { recorder, failed })
+    Ok(OpenMicrophone {
+        recorder,
+        failed,
+        source: InputSource::Microphone,
+    })
 }
 
 /// Opens with the selected channel, or averages all channels if the device
@@ -647,6 +669,13 @@ pub struct AudioRecordingManager {
     cached_device: Arc<Mutex<Option<(CacheKey, String)>>>,
     /// The last recording was all-zero samples, not just audio without speech.
     last_input_silent: Arc<AtomicBool>,
+    /// The source of the open (or last opened) stream. Mute, feedback
+    /// sounds and notices follow what is actually recording, not the
+    /// setting, which can change mid-recording.
+    open_source: Arc<AtomicU8>,
+    /// The source of the last finished recording, read with
+    /// `last_input_silent`.
+    last_input_source: Arc<AtomicU8>,
 }
 
 impl AudioRecordingManager {
@@ -689,6 +718,8 @@ impl AudioRecordingManager {
             capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
             last_input_silent: Arc::new(AtomicBool::new(false)),
+            open_source: Arc::new(AtomicU8::new(0)),
+            last_input_source: Arc::new(AtomicU8::new(0)),
         };
 
         // Always-on?  Open immediately.
@@ -1008,10 +1039,16 @@ impl AudioRecordingManager {
         let frames_per_chunk = self.vad_frame_samples()?;
         let vad_elapsed = vad_started.elapsed();
 
-        let channel = *self.selected_channel.lock().unwrap();
-        let take_headset = self.airpods_mode.load(Ordering::Acquire);
+        // An output is mixed to mono, and AirPods mode is about microphones.
+        let (channel, take_headset) = match resolution.source {
+            InputSource::SystemOutput => (None, false),
+            InputSource::Microphone => (
+                *self.selected_channel.lock().unwrap(),
+                self.airpods_mode.load(Ordering::Acquire),
+            ),
+        };
         let open_started = Instant::now();
-        let microphone = match open_microphone_on_channel(
+        let mut microphone = match open_microphone_on_channel(
             resolution.device.clone(),
             channel,
             take_headset,
@@ -1033,6 +1070,9 @@ impl AudioRecordingManager {
             }
             result => result,
         }?;
+        microphone.source = resolution.source;
+        self.open_source
+            .store(source_to_u8(resolution.source), Ordering::Release);
         debug!(
             "mic stream breakdown: device_resolve={:?} vad_ensure={:?} open={:?}",
             resolve_elapsed,
@@ -1118,12 +1158,16 @@ impl AudioRecordingManager {
                 self.return_vad(captured.vad);
                 self.last_input_silent
                     .store(captured.input_silent, Ordering::Release);
+                self.last_input_source
+                    .store(source_to_u8(microphone.source), Ordering::Release);
                 captured.samples
             }
             Err(e) => {
                 // The recording and its detector are lost with the sink.
                 error!("Failed to stop recording: {e}");
                 self.last_input_silent.store(false, Ordering::Release);
+                self.last_input_source
+                    .store(source_to_u8(microphone.source), Ordering::Release);
                 if e.kind() != ErrorKind::NotRecording {
                     microphone.failed.store(true, Ordering::Release);
                 }
@@ -1372,6 +1416,16 @@ impl AudioRecordingManager {
     }
 
     /// Whether the last stopped recording's device sent only digital silence.
+    /// The open (or last opened) stream records a sound card output.
+    pub fn capturing_system_output(&self) -> bool {
+        source_from_u8(self.open_source.load(Ordering::Acquire)) == InputSource::SystemOutput
+    }
+
+    /// The last finished recording came from a sound card output.
+    pub fn last_input_was_system_output(&self) -> bool {
+        source_from_u8(self.last_input_source.load(Ordering::Acquire)) == InputSource::SystemOutput
+    }
+
     pub fn last_input_silent(&self) -> bool {
         self.last_input_silent.load(Ordering::Acquire)
     }
