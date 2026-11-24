@@ -12,3 +12,5 @@ Files changed from upstream are listed here as they change:
   (T3: `loopback:` ID scheme, `DeviceRef`, loopback listing API)
 - src/backend/cpal/mod.rs, Cargo.toml (+ both Cargo.lock)
   (T4: list outputs through cpal; `objc2-foundation` for the macOS version check)
+- src/backend/cpal/mod.rs
+  (T5: open outputs in loopback mode; T6: Windows silent keepalive)

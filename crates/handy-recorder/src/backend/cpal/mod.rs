@@ -446,6 +446,13 @@ struct CpalOpenDevice {
 
 struct CpalStream {
     _stream: cpal::Stream,
+    /// Silent output on the recorded device, so a WASAPI loopback capture
+    /// keeps delivering when nothing plays (it sends no packets otherwise,
+    /// and the watchdog would fail the recorder). Declared right after
+    /// `_stream`: fields drop in order, and the capture must stop before
+    /// the render. Never read: it only has to stay alive.
+    #[allow(dead_code)]
+    keepalive: Option<cpal::Stream>,
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     device_id: Option<cpal::DeviceId>,
     /// Silent output holding the headset (`take_headset`).
@@ -495,8 +502,9 @@ impl InputStream for CpalStream {
     }
 }
 
-/// Starts a stream playing silence on the output device `id`.
-#[cfg(target_os = "macos")]
+/// Starts a stream playing silence on the output device `id`: holds a
+/// headset (macOS) or keeps a loopback capture delivering (Windows).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn silent_output(id: &cpal::DeviceId) -> Result<cpal::Stream, String> {
     let host = cpal::host_from_id(id.host()).map_err(|e| e.to_string())?;
     let device = host
@@ -568,6 +576,28 @@ impl OpenDevice for CpalOpenDevice {
             log::debug!("requesting {frames}-frame (500 ms) capture buffer from WASAPI");
             config.buffer_size = cpal::BufferSize::Fixed(frames);
         }
+        #[cfg(target_os = "windows")]
+        let keepalive = if self.info.kind == DeviceKind::Loopback {
+            match self.device_id.as_ref().map(silent_output) {
+                Some(Ok(stream)) => {
+                    log::debug!("loopback keepalive: playing silence on the recorded output");
+                    Some(stream)
+                }
+                Some(Err(e)) => {
+                    // Capture still works while something plays.
+                    log::warn!("loopback keepalive failed, recording without it: {e}");
+                    None
+                }
+                None => {
+                    log::warn!("loopback keepalive skipped: the output has no ID");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "windows"))]
+        let keepalive: Option<cpal::Stream> = None;
         let build_started = Instant::now();
         let device = &self.device;
         let stream = match self.format.sample_format {
@@ -598,6 +628,7 @@ impl OpenDevice for CpalOpenDevice {
         );
         Ok(Box::new(CpalStream {
             _stream: stream,
+            keepalive,
             device_id: self.device_id,
             headset: None,
             #[cfg(target_os = "linux")]
