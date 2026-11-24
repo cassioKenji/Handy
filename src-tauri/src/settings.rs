@@ -121,6 +121,17 @@ pub struct PostProcessProvider {
     pub api_format: PostProcessApiFormat,
 }
 
+/// Where dictation audio comes from.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum InputSource {
+    /// A microphone (`selected_microphone`).
+    #[default]
+    Microphone,
+    /// What a sound card is playing (`selected_loopback_device`).
+    SystemOutput,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum OverlayPosition {
@@ -451,6 +462,13 @@ pub struct AppSettings {
     pub clamshell_microphone: Option<String>,
     #[serde(default)]
     pub selected_output_device: Option<String>,
+    /// Record a microphone, or what a sound card is playing.
+    #[serde(default)]
+    pub input_source: InputSource,
+    /// Name of the output to record; `None` follows the system's default
+    /// output.
+    #[serde(default)]
+    pub selected_loopback_device: Option<String>,
     #[serde(default = "default_translate_to_english")]
     pub translate_to_english: bool,
     #[serde(default = "default_selected_language")]
@@ -1029,6 +1047,8 @@ pub fn get_default_settings() -> AppSettings {
         selected_channel: None,
         clamshell_microphone: None,
         selected_output_device: None,
+        input_source: InputSource::Microphone,
+        selected_loopback_device: None,
         translate_to_english: false,
         selected_language: "auto".to_string(),
         overlay_position: default_overlay_position(),
@@ -1536,6 +1556,21 @@ mod tests {
         let result = get_stored_binding(&settings, "unknown");
 
         assert_eq!(result.unwrap_err(), "Binding with id 'unknown' not found");
+    }
+
+    #[test]
+    fn input_source_defaults_to_microphone() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(settings.input_source, InputSource::Microphone);
+        assert_eq!(settings.selected_loopback_device, None);
+    }
+
+    #[test]
+    fn input_source_uses_snake_case() {
+        assert_eq!(
+            serde_json::to_value(InputSource::SystemOutput).unwrap(),
+            serde_json::json!("system_output")
+        );
     }
 
     fn default_settings_json() -> serde_json::Value {
