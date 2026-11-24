@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AppSettings as Settings,
   AudioDevice,
+  InputSource,
   PostProcessApiFormat,
   ChineseScript,
   TranscribeAcceleratorSetting,
@@ -21,6 +22,9 @@ interface SettingsStore {
   isUpdating: Record<string, boolean>;
   audioDevices: AudioDevice[];
   outputDevices: AudioDevice[];
+  loopbackDevices: AudioDevice[];
+  /** Whether this OS can record its sound output. */
+  loopbackSupported: boolean;
   customSounds: { start: boolean; stop: boolean };
   postProcessModelOptions: Record<string, string[]>;
   // null until loadUpdateChecksLocked() resolves
@@ -38,6 +42,8 @@ interface SettingsStore {
   refreshSettings: () => Promise<void>;
   refreshAudioDevices: () => Promise<void>;
   refreshOutputDevices: () => Promise<void>;
+  refreshLoopbackDevices: () => Promise<void>;
+  loadLoopbackSupported: () => Promise<void>;
   updateBinding: (id: string, binding: string) => Promise<void>;
   resetBinding: (id: string) => Promise<void>;
   getSetting: <K extends keyof Settings>(key: K) => Settings[K] | undefined;
@@ -112,6 +118,13 @@ const settingUpdaters: {
     commands.changeHoldThresholdMsSetting(value as number),
   selected_microphone: (value) =>
     commands.setSelectedMicrophone(
+      (value as string) === "Default" || value === null
+        ? "default"
+        : (value as string),
+    ),
+  input_source: (value) => commands.setInputSource(value as InputSource),
+  selected_loopback_device: (value) =>
+    commands.setSelectedLoopbackDevice(
       (value as string) === "Default" || value === null
         ? "default"
         : (value as string),
@@ -227,6 +240,8 @@ export const useSettingsStore = create<SettingsStore>()(
     isUpdating: {},
     audioDevices: [],
     outputDevices: [],
+    loopbackDevices: [],
+    loopbackSupported: false,
     customSounds: { start: false, stop: false },
     postProcessModelOptions: {},
     updateChecksLocked: null,
@@ -260,6 +275,9 @@ export const useSettingsStore = create<SettingsStore>()(
             clamshell_microphone: settings.clamshell_microphone ?? "Default",
             selected_output_device:
               settings.selected_output_device ?? "Default",
+            selected_loopback_device:
+              settings.selected_loopback_device ?? "Default",
+            input_source: settings.input_source ?? "microphone",
           };
           set({ settings: normalizedSettings, isLoading: false });
         } else {
@@ -311,6 +329,36 @@ export const useSettingsStore = create<SettingsStore>()(
       } catch (error) {
         console.error("Failed to load output devices:", error);
         set({ outputDevices: [DEFAULT_AUDIO_DEVICE] });
+      }
+    },
+
+    // Load the outputs that can be recorded (loopback)
+    refreshLoopbackDevices: async () => {
+      try {
+        const result = await commands.getAvailableLoopbackDevices();
+        if (result.status === "ok") {
+          const devicesWithDefault = [
+            DEFAULT_AUDIO_DEVICE,
+            ...result.data.filter(
+              (d) => d.name !== "Default" && d.name !== "default",
+            ),
+          ];
+          set({ loopbackDevices: devicesWithDefault });
+        } else {
+          set({ loopbackDevices: [DEFAULT_AUDIO_DEVICE] });
+        }
+      } catch (error) {
+        console.error("Failed to load loopback devices:", error);
+        set({ loopbackDevices: [DEFAULT_AUDIO_DEVICE] });
+      }
+    },
+
+    loadLoopbackSupported: async () => {
+      try {
+        set({ loopbackSupported: await commands.isLoopbackSupported() });
+      } catch (error) {
+        console.error("Failed to check loopback support:", error);
+        set({ loopbackSupported: false });
       }
     },
 
@@ -687,6 +735,8 @@ export const useSettingsStore = create<SettingsStore>()(
         checkCustomSounds,
         loadDefaultSettings,
         loadUpdateChecksLocked,
+        refreshLoopbackDevices,
+        loadLoopbackSupported,
       } = get();
 
       // Note: Audio devices are NOT refreshed here. The frontend (App.tsx)
@@ -698,6 +748,8 @@ export const useSettingsStore = create<SettingsStore>()(
         refreshSettings(),
         checkCustomSounds(),
         loadUpdateChecksLocked(),
+        refreshLoopbackDevices(),
+        loadLoopbackSupported(),
       ]);
 
       // Re-fetch settings when the backend changes them (e.g. language
@@ -709,6 +761,9 @@ export const useSettingsStore = create<SettingsStore>()(
         get().refreshSettings();
         if (event.payload.setting === "selected_microphone") {
           get().refreshAudioDevices();
+        }
+        if (event.payload.setting === "selected_loopback_device") {
+          get().refreshLoopbackDevices();
         }
       });
     },
