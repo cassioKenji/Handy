@@ -16,3 +16,5 @@ Files changed from upstream are listed here as they change:
   (T5: open outputs in loopback mode; T6: Windows silent keepalive)
 - src/capture/engine.rs
   (T7: microphone permission does not apply to loopback)
+- src/tests/loopback.rs (new), src/tests/mod.rs
+  (T8: loopback tests over the fake backend)

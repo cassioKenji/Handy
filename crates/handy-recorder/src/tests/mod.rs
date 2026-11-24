@@ -3,4 +3,5 @@
 mod failures;
 mod formats;
 mod lifecycle;
+mod loopback;
 mod support;

@@ -676,7 +676,9 @@ mod tests {
                 device.id,
                 device.channels
             );
-            let open = backend.open_device(Some(&device.id)).expect("open loopback");
+            let open = backend
+                .open_device(Some(&device.id))
+                .expect("open loopback");
             assert_eq!(open.info().kind, DeviceKind::Loopback);
             eprintln!("    format={:?}", open.format());
         }

@@ -223,7 +223,10 @@ mod device_ref_tests {
     #[test]
     fn parses_each_direction() {
         assert_eq!(DeviceRef::parse(None), DeviceRef::Default);
-        assert_eq!(DeviceRef::parse(Some("wasapi:{a}")), DeviceRef::Input("wasapi:{a}"));
+        assert_eq!(
+            DeviceRef::parse(Some("wasapi:{a}")),
+            DeviceRef::Input("wasapi:{a}")
+        );
         assert_eq!(
             DeviceRef::parse(Some("loopback:wasapi:{a}")),
             DeviceRef::Loopback("wasapi:{a}")
