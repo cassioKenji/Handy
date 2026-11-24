@@ -14,8 +14,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use error::{map_error, map_error_during};
 
 use super::{
-    Backend, BackendError, BackendErrorKind, DataCallback, DeviceFormat, ErrorCallback,
-    InputSample, InputStream, OpenDevice, SampleFormat,
+    Backend, BackendError, BackendErrorKind, DataCallback, DeviceFormat, DeviceRef, ErrorCallback,
+    InputSample, InputStream, LOOPBACK_PREFIX, OpenDevice, SampleFormat,
 };
 use crate::{DeviceKind, InputDevice, Permission};
 
@@ -131,22 +131,93 @@ fn channels_without_opening(host: cpal::HostId, device: &cpal::Device) -> Option
     device.default_input_config().ok().map(|c| c.channels())
 }
 
+/// Which list `enumerate` builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Input,
+    Loopback,
+}
+
+/// Whether the OS can record an output (cached; reading it on macOS asks
+/// Foundation for the OS version).
+fn os_supports_loopback() -> bool {
+    static SUPPORTED: OnceLock<bool> = OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        #[cfg(target_os = "windows")]
+        {
+            true
+        }
+        #[cfg(target_os = "macos")]
+        {
+            macos_at_least(14, 6)
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            false
+        }
+    })
+}
+
+/// CPAL records an output through a process tap from macOS 14.6.
+#[cfg(target_os = "macos")]
+fn macos_at_least(major: isize, minor: isize) -> bool {
+    use objc2_foundation::{NSOperatingSystemVersion, NSProcessInfo};
+    let version = NSOperatingSystemVersion {
+        majorVersion: major,
+        minorVersion: minor,
+        patchVersion: 0,
+    };
+    NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(version)
+}
+
+/// Whether CPAL would record this output rather than something else.
+/// On macOS, CPAL opens a device that also has inputs as a microphone
+/// (`supports_input`), so only output-only devices can be recorded.
+fn loopback_capable(device: &cpal::Device) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        device.default_input_config().is_err()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = device;
+        true
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = device;
+        false
+    }
+}
+
 /// Devices without a backend ID get one from name and occurrence ("USB Mic#1").
 fn enumerate(
     host: &cpal::Host,
+    dir: Direction,
     with_channels: bool,
 ) -> Result<Vec<(InputDevice, cpal::Device)>, BackendError> {
-    let default_id = host.default_input_device().and_then(|d| d.id().ok());
+    let default_id = match dir {
+        Direction::Input => host.default_input_device(),
+        Direction::Loopback => host.default_output_device(),
+    }
+    .and_then(|d| d.id().ok());
+    let devices: Vec<cpal::Device> = match dir {
+        Direction::Input => host.input_devices().map_err(map_error)?.collect(),
+        Direction::Loopback => host.output_devices().map_err(map_error)?.collect(),
+    };
     let backend = host.id().name().to_owned();
     let mut occurrences = HashMap::<String, u32>::new();
     let mut out = Vec::new();
-    for device in host.input_devices().map_err(map_error)? {
+    for device in devices {
         if device.id().is_ok_and(|id| is_null_pcm(&id)) {
+            continue;
+        }
+        if dir == Direction::Loopback && !loopback_capable(&device) {
             continue;
         }
         let name = device_name(&device);
         let occurrence = occurrences.entry(name.clone()).or_default();
-        let (id, stable, is_default, monitor) = match device.id() {
+        let (raw_id, stable, is_default, monitor) = match device.id() {
             Ok(id) => (
                 id.to_string(),
                 id_is_stable(id.host()),
@@ -154,6 +225,22 @@ fn enumerate(
                 is_monitor(&id),
             ),
             Err(_) => (format!("{name}#{occurrence}"), false, false, false),
+        };
+        let (id, kind, channels) = match dir {
+            Direction::Input => (
+                raw_id,
+                DeviceKind::Microphone,
+                with_channels
+                    .then(|| channels_without_opening(host.id(), &device))
+                    .flatten(),
+            ),
+            Direction::Loopback => (
+                format!("{LOOPBACK_PREFIX}{raw_id}"),
+                DeviceKind::Loopback,
+                with_channels
+                    .then(|| device.default_output_config().ok().map(|c| c.channels()))
+                    .flatten(),
+            ),
         };
         out.push((
             InputDevice {
@@ -163,13 +250,9 @@ fn enumerate(
                 backend: backend.clone(),
                 is_default,
                 id_is_stable: stable,
-                channels: if with_channels {
-                    channels_without_opening(host.id(), &device)
-                } else {
-                    None
-                },
-                is_monitor: monitor,
-                kind: DeviceKind::Microphone,
+                channels,
+                is_monitor: dir == Direction::Input && monitor,
+                kind,
             },
             device,
         ));
@@ -189,18 +272,25 @@ impl Backend for CpalBackend {
 
     fn list_input_devices(&self) -> Result<Vec<InputDevice>, BackendError> {
         let host = self.host()?;
-        Ok(enumerate(&host, true)?
+        Ok(enumerate(&host, Direction::Input, true)?
             .into_iter()
             .map(|(info, _)| info)
             .collect())
     }
 
     fn list_loopback_devices(&self) -> Result<Vec<InputDevice>, BackendError> {
-        Ok(Vec::new())
+        if !self.loopback_supported() {
+            return Ok(Vec::new());
+        }
+        let host = self.host()?;
+        Ok(enumerate(&host, Direction::Loopback, true)?
+            .into_iter()
+            .map(|(info, _)| info)
+            .collect())
     }
 
     fn loopback_supported(&self) -> bool {
-        false
+        os_supports_loopback()
     }
 
     fn open_device(&self, id: Option<&str>) -> Result<Box<dyn OpenDevice>, BackendError> {
@@ -208,7 +298,7 @@ impl Backend for CpalBackend {
         let host = self.host()?;
         let host = &*host;
         let (mut info, device) = match id {
-            Some(id) => enumerate(host, false)?
+            Some(id) => enumerate(host, Direction::Input, false)?
                 .into_iter()
                 .find(|(info, _)| info.id == id)
                 .ok_or_else(|| {
@@ -227,7 +317,7 @@ impl Backend for CpalBackend {
                 let id = default.id().ok();
                 // Open the resolved device, not "default": WASAPI invalidates
                 // a default stream when the user switches.
-                enumerate(host, false)
+                enumerate(host, Direction::Input, false)
                     .ok()
                     .and_then(|devices| {
                         devices
@@ -499,6 +589,17 @@ mod tests {
         let backend = CpalBackend::new();
         let devices = backend.list_input_devices().expect("list");
         assert!(!devices.is_empty(), "no input devices");
+        for device in backend.list_loopback_devices().expect("list loopback") {
+            assert_eq!(device.kind, DeviceKind::Loopback);
+            assert!(device.id.starts_with(LOOPBACK_PREFIX));
+            eprintln!(
+                "{} [loopback] {} id={} channels={:?}",
+                if device.is_default { "*" } else { " " },
+                device.name,
+                device.id,
+                device.channels
+            );
+        }
         assert!(devices.iter().filter(|d| d.is_default).count() <= 1);
         for device in &devices {
             let open = backend

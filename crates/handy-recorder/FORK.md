@@ -10,3 +10,5 @@ Files changed from upstream are listed here as they change:
   (T2: `DeviceKind` and `InputDevice::kind`)
 - src/backend/mod.rs (+ device.rs, lib.rs, cpal/mod.rs, fake.rs)
   (T3: `loopback:` ID scheme, `DeviceRef`, loopback listing API)
+- src/backend/cpal/mod.rs, Cargo.toml (+ both Cargo.lock)
+  (T4: list outputs through cpal; `objc2-foundation` for the macOS version check)
