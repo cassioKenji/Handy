@@ -9,6 +9,8 @@ export { ModelsSettings } from "./models/ModelsSettings";
 
 // Individual setting components
 export { MicrophoneSelector } from "./MicrophoneSelector";
+export { InputSourceSelector } from "./InputSourceSelector";
+export { SystemOutputSelector } from "./SystemOutputSelector";
 export { ChannelSelector } from "./ChannelSelector";
 export { ClamshellMicrophoneSelector } from "./ClamshellMicrophoneSelector";
 export { OutputDeviceSelector } from "./OutputDeviceSelector";

@@ -438,6 +438,19 @@
     },
     "sound": {
       "title": "Sound",
+      "inputSource": {
+        "title": "Input Source",
+        "description": "Record from a microphone, or from what your computer is playing",
+        "microphone": "Microphone",
+        "systemOutput": "System Output",
+        "unsupported": "Recording what your computer plays needs macOS 14.6 or later"
+      },
+      "systemOutput": {
+        "title": "Output to Record",
+        "description": "Which speakers or headphones to record",
+        "placeholder": "Select output...",
+        "loading": "Loading..."
+      },
       "microphone": {
         "title": "Microphone",
         "description": "Select your preferred microphone device",

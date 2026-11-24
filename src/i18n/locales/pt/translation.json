@@ -463,6 +463,19 @@
       "volume": {
         "title": "Volume",
         "description": "Ajustar o volume dos sons de feedback de áudio"
+      },
+      "inputSource": {
+        "title": "Fonte de Entrada",
+        "description": "Gravar de um microfone, ou do que o computador está tocando",
+        "microphone": "Microfone",
+        "systemOutput": "Saída do Sistema",
+        "unsupported": "Gravar o que o computador toca exige macOS 14.6 ou mais novo"
+      },
+      "systemOutput": {
+        "title": "Saída a Gravar",
+        "description": "Quais alto-falantes ou fones gravar",
+        "placeholder": "Selecione a saída...",
+        "loading": "Carregando..."
       }
     },
     "advanced": {
