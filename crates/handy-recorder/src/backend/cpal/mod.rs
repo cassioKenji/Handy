@@ -297,17 +297,49 @@ impl Backend for CpalBackend {
         let resolve_started = Instant::now();
         let host = self.host()?;
         let host = &*host;
-        let (mut info, device) = match id {
-            Some(id) => enumerate(host, Direction::Input, false)?
-                .into_iter()
-                .find(|(info, _)| info.id == id)
-                .ok_or_else(|| {
-                    BackendError::new(
-                        BackendErrorKind::DeviceNotAvailable,
-                        format!("No input device with ID {id:?}"),
-                    )
-                })?,
-            None => {
+        match DeviceRef::parse(id) {
+            DeviceRef::Loopback(raw) => {
+                if !self.loopback_supported() {
+                    return Err(BackendError::new(
+                        BackendErrorKind::UnsupportedConfig,
+                        "Recording a sound card's output needs Windows or macOS 14.6+",
+                    ));
+                }
+                let full = format!("{LOOPBACK_PREFIX}{raw}");
+                let (info, device) = enumerate(host, Direction::Loopback, false)?
+                    .into_iter()
+                    .find(|(info, _)| info.id == full)
+                    .ok_or_else(|| {
+                        BackendError::new(
+                            BackendErrorKind::DeviceNotAvailable,
+                            format!("No output device with ID {raw:?}"),
+                        )
+                    })?;
+                log::debug!("resolve_device={:?}", resolve_started.elapsed());
+                let config_started = Instant::now();
+                // The output's own format: loopback captures the mix the
+                // device plays, and an output has no input config.
+                let config = device
+                    .default_output_config()
+                    .map_err(|e| map_error_during("Failed to fetch output config", e))?;
+                log::debug!("fetch_config={:?}", config_started.elapsed());
+                finish_open(host.id(), info, device, config)
+            }
+            DeviceRef::Input(id) => {
+                let (info, device) = enumerate(host, Direction::Input, false)?
+                    .into_iter()
+                    .find(|(info, _)| info.id == id)
+                    .ok_or_else(|| {
+                        BackendError::new(
+                            BackendErrorKind::DeviceNotAvailable,
+                            format!("No input device with ID {id:?}"),
+                        )
+                    })?;
+                log::debug!("resolve_device={:?}", resolve_started.elapsed());
+                let config = input_config(&device)?;
+                finish_open(host.id(), info, device, config)
+            }
+            DeviceRef::Default => {
                 let default = host.default_input_device().ok_or_else(|| {
                     BackendError::new(
                         BackendErrorKind::DeviceNotAvailable,
@@ -317,7 +349,7 @@ impl Backend for CpalBackend {
                 let id = default.id().ok();
                 // Open the resolved device, not "default": WASAPI invalidates
                 // a default stream when the user switches.
-                enumerate(host, Direction::Input, false)
+                let (info, device) = enumerate(host, Direction::Input, false)
                     .ok()
                     .and_then(|devices| {
                         devices
@@ -337,54 +369,68 @@ impl Backend for CpalBackend {
                             kind: DeviceKind::Microphone,
                         };
                         (info, default)
-                    })
+                    });
+                log::debug!("resolve_device={:?}", resolve_started.elapsed());
+                let config = input_config(&device)?;
+                finish_open(host.id(), info, device, config)
             }
-        };
-
-        log::debug!("resolve_device={:?}", resolve_started.elapsed());
-
-        let config_started = Instant::now();
-        let config = device
-            .default_input_config()
-            .map_err(|e| map_error_during("Failed to fetch preferred config", e))?;
-        log::debug!("fetch_config={:?}", config_started.elapsed());
-
-        let sample_format = match config.sample_format() {
-            cpal::SampleFormat::U8 => SampleFormat::U8,
-            cpal::SampleFormat::I8 => SampleFormat::I8,
-            cpal::SampleFormat::U16 => SampleFormat::U16,
-            cpal::SampleFormat::I16 => SampleFormat::I16,
-            cpal::SampleFormat::U24 => SampleFormat::U24,
-            cpal::SampleFormat::I24 => SampleFormat::I24,
-            cpal::SampleFormat::U32 => SampleFormat::U32,
-            cpal::SampleFormat::I32 => SampleFormat::I32,
-            cpal::SampleFormat::U64 => SampleFormat::U64,
-            cpal::SampleFormat::I64 => SampleFormat::I64,
-            cpal::SampleFormat::F32 => SampleFormat::F32,
-            cpal::SampleFormat::F64 => SampleFormat::F64,
-            sample_format => {
-                return Err(BackendError::new(
-                    BackendErrorKind::UnsupportedConfig,
-                    format!("Unsupported sample format: {sample_format:?}"),
-                ));
-            }
-        };
-
-        info.channels = Some(config.channels());
-
-        Ok(Box::new(CpalOpenDevice {
-            host: host.id(),
-            info,
-            device_id: device.id().ok(),
-            device,
-            config,
-            format: DeviceFormat {
-                sample_rate: config.sample_rate(),
-                channels: config.channels(),
-                sample_format,
-            },
-        }))
+        }
     }
+}
+
+/// A microphone's preferred config, timed.
+fn input_config(device: &cpal::Device) -> Result<cpal::SupportedStreamConfig, BackendError> {
+    let config_started = Instant::now();
+    let config = device
+        .default_input_config()
+        .map_err(|e| map_error_during("Failed to fetch preferred config", e))?;
+    log::debug!("fetch_config={:?}", config_started.elapsed());
+    Ok(config)
+}
+
+/// Builds the `OpenDevice` for a resolved device and the config to run it
+/// at (input config for a microphone, output config for loopback).
+fn finish_open(
+    host: cpal::HostId,
+    mut info: InputDevice,
+    device: cpal::Device,
+    config: cpal::SupportedStreamConfig,
+) -> Result<Box<dyn OpenDevice>, BackendError> {
+    let sample_format = match config.sample_format() {
+        cpal::SampleFormat::U8 => SampleFormat::U8,
+        cpal::SampleFormat::I8 => SampleFormat::I8,
+        cpal::SampleFormat::U16 => SampleFormat::U16,
+        cpal::SampleFormat::I16 => SampleFormat::I16,
+        cpal::SampleFormat::U24 => SampleFormat::U24,
+        cpal::SampleFormat::I24 => SampleFormat::I24,
+        cpal::SampleFormat::U32 => SampleFormat::U32,
+        cpal::SampleFormat::I32 => SampleFormat::I32,
+        cpal::SampleFormat::U64 => SampleFormat::U64,
+        cpal::SampleFormat::I64 => SampleFormat::I64,
+        cpal::SampleFormat::F32 => SampleFormat::F32,
+        cpal::SampleFormat::F64 => SampleFormat::F64,
+        sample_format => {
+            return Err(BackendError::new(
+                BackendErrorKind::UnsupportedConfig,
+                format!("Unsupported sample format: {sample_format:?}"),
+            ));
+        }
+    };
+
+    info.channels = Some(config.channels());
+
+    Ok(Box::new(CpalOpenDevice {
+        host,
+        info,
+        device_id: device.id().ok(),
+        device,
+        config,
+        format: DeviceFormat {
+            sample_rate: config.sample_rate(),
+            channels: config.channels(),
+            sample_format,
+        },
+    }))
 }
 
 struct CpalOpenDevice {
@@ -599,6 +645,9 @@ mod tests {
                 device.id,
                 device.channels
             );
+            let open = backend.open_device(Some(&device.id)).expect("open loopback");
+            assert_eq!(open.info().kind, DeviceKind::Loopback);
+            eprintln!("    format={:?}", open.format());
         }
         assert!(devices.iter().filter(|d| d.is_default).count() <= 1);
         for device in &devices {
