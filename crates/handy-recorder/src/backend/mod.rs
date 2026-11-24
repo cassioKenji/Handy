@@ -15,8 +15,41 @@ use dasp_sample::{I24, Sample, U24};
 
 use crate::{InputDevice, Permission};
 
+/// Prefix of every loopback device ID. CoreAudio gives a device's input
+/// and output the same UID, so the direction has to live in the ID.
+pub(crate) const LOOPBACK_PREFIX: &str = "loopback:";
+
+/// A `RecorderConfig::device`, split by direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeviceRef<'a> {
+    /// `None`: the system's default input.
+    Default,
+    /// A microphone ID.
+    Input(&'a str),
+    /// An output ID, with `LOOPBACK_PREFIX` removed.
+    Loopback(&'a str),
+}
+
+impl<'a> DeviceRef<'a> {
+    pub fn parse(id: Option<&'a str>) -> Self {
+        match id {
+            None => Self::Default,
+            Some(id) => match id.strip_prefix(LOOPBACK_PREFIX) {
+                Some(rest) => Self::Loopback(rest),
+                None => Self::Input(id),
+            },
+        }
+    }
+}
+
 pub(crate) trait Backend: Send + Sync + 'static {
     fn list_input_devices(&self) -> Result<Vec<InputDevice>, BackendError>;
+
+    /// Outputs that can be recorded by loopback; empty where unsupported.
+    fn list_loopback_devices(&self) -> Result<Vec<InputDevice>, BackendError>;
+
+    /// Whether this OS can record an output at all.
+    fn loopback_supported(&self) -> bool;
 
     /// Resolves `id`, or the default for `None`, and reads its OS format.
     fn open_device(&self, id: Option<&str>) -> Result<Box<dyn OpenDevice>, BackendError>;
@@ -182,3 +215,23 @@ impl fmt::Display for BackendError {
 }
 
 impl std::error::Error for BackendError {}
+
+#[cfg(test)]
+mod device_ref_tests {
+    use super::DeviceRef;
+
+    #[test]
+    fn parses_each_direction() {
+        assert_eq!(DeviceRef::parse(None), DeviceRef::Default);
+        assert_eq!(DeviceRef::parse(Some("wasapi:{a}")), DeviceRef::Input("wasapi:{a}"));
+        assert_eq!(
+            DeviceRef::parse(Some("loopback:wasapi:{a}")),
+            DeviceRef::Loopback("wasapi:{a}")
+        );
+        // Only the first prefix is removed.
+        assert_eq!(
+            DeviceRef::parse(Some("loopback:loopback:x")),
+            DeviceRef::Loopback("loopback:x")
+        );
+    }
+}

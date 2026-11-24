@@ -5,8 +5,8 @@
 use std::sync::{Arc, Condvar, Mutex};
 
 use super::{
-    Backend, BackendError, BackendErrorKind, DataCallback, DeviceFormat, ErrorCallback,
-    InputSample, InputStream, OpenDevice,
+    Backend, BackendError, BackendErrorKind, DataCallback, DeviceFormat, DeviceRef, ErrorCallback,
+    InputSample, InputStream, LOOPBACK_PREFIX, OpenDevice,
 };
 use crate::{DeviceKind, InputDevice, Permission};
 
@@ -45,6 +45,10 @@ struct State {
     removed: bool,
     /// `check_device` panics, as a backend bug would.
     check_panics: bool,
+    /// Loopback devices this fake lists, with `LOOPBACK_PREFIX` IDs.
+    loopback: Vec<InputDevice>,
+    /// Behave like an OS that can't record its output (default: it can).
+    loopback_unsupported: bool,
 }
 
 /// Holds a platform call until opened, like a driver that hangs.
@@ -84,6 +88,27 @@ impl FakeBackend {
                 state: Mutex::default(),
             }),
         }
+    }
+
+    /// Adds a loopback device; `raw_id` gets `LOOPBACK_PREFIX`.
+    pub fn add_loopback(&self, raw_id: &str, name: &str) {
+        let device = InputDevice {
+            id: format!("{LOOPBACK_PREFIX}{raw_id}"),
+            name: name.into(),
+            occurrence: 0,
+            backend: "Fake".into(),
+            is_default: self.shared.state.lock().unwrap().loopback.is_empty(),
+            id_is_stable: true,
+            channels: Some(self.shared.format.channels),
+            is_monitor: false,
+            kind: DeviceKind::Loopback,
+        };
+        self.shared.state.lock().unwrap().loopback.push(device);
+    }
+
+    /// Behave like macOS before 14.6.
+    pub fn set_loopback_unsupported(&self) {
+        self.shared.state.lock().unwrap().loopback_unsupported = true;
     }
 
     /// Delivers one callback block to the running stream, on this thread.
@@ -179,29 +204,70 @@ impl Backend for FakeBackend {
         Ok(vec![self.shared.device.clone()])
     }
 
+    fn list_loopback_devices(&self) -> Result<Vec<InputDevice>, BackendError> {
+        let state = self.shared.state.lock().unwrap();
+        if state.loopback_unsupported {
+            return Ok(Vec::new());
+        }
+        Ok(state.loopback.clone())
+    }
+
+    fn loopback_supported(&self) -> bool {
+        !self.shared.state.lock().unwrap().loopback_unsupported
+    }
+
     fn open_device(&self, id: Option<&str>) -> Result<Box<dyn OpenDevice>, BackendError> {
         if let Some(error) = self.shared.state.lock().unwrap().next_open_error.take() {
             return Err(error);
         }
-        if id.is_some_and(|id| id != self.shared.device.id) {
-            return Err(BackendError::new(
-                BackendErrorKind::DeviceNotAvailable,
-                format!("No input device with ID {id:?}"),
-            ));
-        }
-        Ok(Box::new(FakeOpenDevice(self.clone())))
+        let info = match DeviceRef::parse(id) {
+            DeviceRef::Default => self.shared.device.clone(),
+            DeviceRef::Input(id) if id == self.shared.device.id => self.shared.device.clone(),
+            DeviceRef::Input(id) => {
+                return Err(BackendError::new(
+                    BackendErrorKind::DeviceNotAvailable,
+                    format!("No input device with ID {id:?}"),
+                ));
+            }
+            DeviceRef::Loopback(raw) => {
+                if !self.loopback_supported() {
+                    return Err(BackendError::new(
+                        BackendErrorKind::UnsupportedConfig,
+                        "loopback is not supported",
+                    ));
+                }
+                let full = format!("{LOOPBACK_PREFIX}{raw}");
+                let state = self.shared.state.lock().unwrap();
+                match state.loopback.iter().find(|d| d.id == full) {
+                    Some(device) => device.clone(),
+                    None => {
+                        return Err(BackendError::new(
+                            BackendErrorKind::DeviceNotAvailable,
+                            format!("No output device with ID {raw:?}"),
+                        ));
+                    }
+                }
+            }
+        };
+        Ok(Box::new(FakeOpenDevice {
+            backend: self.clone(),
+            info,
+        }))
     }
 }
 
-struct FakeOpenDevice(FakeBackend);
+struct FakeOpenDevice {
+    backend: FakeBackend,
+    info: InputDevice,
+}
 
 impl OpenDevice for FakeOpenDevice {
     fn info(&self) -> &InputDevice {
-        &self.0.shared.device
+        &self.info
     }
 
     fn format(&self) -> DeviceFormat {
-        self.0.shared.format
+        self.backend.shared.format
     }
 
     fn start(
@@ -209,11 +275,11 @@ impl OpenDevice for FakeOpenDevice {
         data: DataCallback,
         error: ErrorCallback,
     ) -> Result<Box<dyn InputStream>, BackendError> {
-        let gate = self.0.shared.state.lock().unwrap().start_gate.take();
+        let gate = self.backend.shared.state.lock().unwrap().start_gate.take();
         if let Some(gate) = gate {
             gate.wait();
         }
-        let mut state = self.0.shared.state.lock().unwrap();
+        let mut state = self.backend.shared.state.lock().unwrap();
         if state.stream.is_some() {
             return Err(BackendError::new(
                 BackendErrorKind::DeviceBusy,
@@ -223,7 +289,7 @@ impl OpenDevice for FakeOpenDevice {
         state.stream = Some((data, error));
         state.streams_started += 1;
         drop(state);
-        Ok(Box::new(FakeStream(self.0)))
+        Ok(Box::new(FakeStream(self.backend)))
     }
 }
 

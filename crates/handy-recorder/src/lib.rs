@@ -51,7 +51,10 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
-pub use device::{DeviceKind, InputDevice, Permission, list_input_devices, permission_status};
+pub use device::{
+    DeviceKind, InputDevice, Permission, list_input_devices, list_loopback_devices,
+    loopback_supported, permission_status,
+};
 pub use error::{Error, ErrorKind};
 pub use sink::{AudioChunk, CollectingSink, Sink};
 pub use types::{Channels, EndReason, Format, RecorderConfig, RecorderInfo};

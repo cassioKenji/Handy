@@ -9,6 +9,20 @@ pub fn list_input_devices() -> Result<Vec<InputDevice>, Error> {
         .map_err(|e| open_error(e, None))
 }
 
+/// Lists outputs that can be recorded by loopback: what a sound card is
+/// playing. Empty where the OS can't (macOS before 14.6, Linux). Pass an
+/// entry's `id` as `RecorderConfig::device` to record it.
+pub fn list_loopback_devices() -> Result<Vec<InputDevice>, Error> {
+    CpalBackend::shared()
+        .list_loopback_devices()
+        .map_err(|e| open_error(e, None))
+}
+
+/// Whether this OS can record its output (Windows; macOS 14.6 or later).
+pub fn loopback_supported() -> bool {
+    CpalBackend::shared().loopback_supported()
+}
+
 /// What an [`InputDevice`] records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]

@@ -195,6 +195,14 @@ impl Backend for CpalBackend {
             .collect())
     }
 
+    fn list_loopback_devices(&self) -> Result<Vec<InputDevice>, BackendError> {
+        Ok(Vec::new())
+    }
+
+    fn loopback_supported(&self) -> bool {
+        false
+    }
+
     fn open_device(&self, id: Option<&str>) -> Result<Box<dyn OpenDevice>, BackendError> {
         let resolve_started = Instant::now();
         let host = self.host()?;

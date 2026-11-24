@@ -8,3 +8,5 @@ Files changed from upstream are listed here as they change:
 
 - src/device.rs, src/lib.rs, src/backend/cpal/mod.rs, src/backend/fake.rs
   (T2: `DeviceKind` and `InputDevice::kind`)
+- src/backend/mod.rs (+ device.rs, lib.rs, cpal/mod.rs, fake.rs)
+  (T3: `loopback:` ID scheme, `DeviceRef`, loopback listing API)
