@@ -432,17 +432,31 @@ impl OpenMicrophone {
     }
 }
 
-/// The notice for a recording that couldn't start.
-pub fn recording_notice_code(error: &anyhow::Error) -> NoticeCode {
-    match error
+/// The notice for a recording that couldn't start. `source` is what the
+/// settings asked for: no stream may have opened.
+pub fn recording_notice_code(error: &anyhow::Error, source: InputSource) -> NoticeCode {
+    if let Some(error) = error.downcast_ref::<CaptureSourceError>() {
+        return match error {
+            CaptureSourceError::NoOutputDevice(_) => NoticeCode::NoOutputDevice,
+            CaptureSourceError::Unsupported => NoticeCode::SystemAudioUnsupported,
+        };
+    }
+    let kind = error
         .downcast_ref::<handy_recorder::Error>()
-        .map(handy_recorder::Error::kind)
-    {
-        Some(ErrorKind::PermissionDenied) => NoticeCode::MicPermissionDenied,
-        // A missing selected microphone falls back to the default, so this
-        // means there is no input device at all.
-        Some(ErrorKind::DeviceUnavailable) => NoticeCode::NoMicrophone,
-        _ => NoticeCode::RecordingFailed,
+        .map(handy_recorder::Error::kind);
+    match source {
+        // Microphone permission says nothing about an output.
+        InputSource::SystemOutput => match kind {
+            Some(ErrorKind::DeviceUnavailable) => NoticeCode::NoOutputDevice,
+            _ => NoticeCode::RecordingFailed,
+        },
+        InputSource::Microphone => match kind {
+            Some(ErrorKind::PermissionDenied) => NoticeCode::MicPermissionDenied,
+            // A missing selected microphone falls back to the default, so this
+            // means there is no input device at all.
+            Some(ErrorKind::DeviceUnavailable) => NoticeCode::NoMicrophone,
+            _ => NoticeCode::RecordingFailed,
+        },
     }
 }
 
@@ -1660,13 +1674,43 @@ mod tests {
                 .map(handy_recorder::Error::kind),
             Some(ErrorKind::UnsupportedFormat)
         );
-        assert_eq!(recording_notice_code(&wrapped), NoticeCode::RecordingFailed);
+        assert_eq!(
+            recording_notice_code(&wrapped, InputSource::Microphone),
+            NoticeCode::RecordingFailed
+        );
+    }
+
+    #[test]
+    fn capture_source_errors_map_to_their_notices() {
+        let no_output = anyhow::Error::new(CaptureSourceError::NoOutputDevice(String::new()))
+            .context("Failed to open recorder");
+        assert_eq!(
+            recording_notice_code(&no_output, InputSource::SystemOutput),
+            NoticeCode::NoOutputDevice
+        );
+        let unsupported = anyhow::Error::new(CaptureSourceError::Unsupported);
+        assert_eq!(
+            recording_notice_code(&unsupported, InputSource::SystemOutput),
+            NoticeCode::SystemAudioUnsupported
+        );
+    }
+
+    #[test]
+    fn other_errors_while_recording_an_output_are_generic() {
+        let wrapped = anyhow::Error::new(recorder_error());
+        assert_eq!(
+            recording_notice_code(&wrapped, InputSource::SystemOutput),
+            NoticeCode::RecordingFailed
+        );
     }
 
     #[test]
     fn errors_from_outside_the_recorder_are_unknown() {
         assert_eq!(
-            recording_notice_code(&anyhow::anyhow!("Already recording")),
+            recording_notice_code(
+                &anyhow::anyhow!("Already recording"),
+                InputSource::Microphone
+            ),
             NoticeCode::RecordingFailed
         );
     }

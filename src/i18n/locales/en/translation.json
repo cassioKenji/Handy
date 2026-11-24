@@ -942,6 +942,15 @@
     "noInputDevice": "No audio input device was detected. Please connect a microphone or headset and try again.",
     "microphoneSilentTitle": "Microphone Is Silent",
     "microphoneSilent": "Your microphone sent only silence. Check that it isn't muted, or choose a different microphone in Settings.",
+    "noOutputDeviceTitle": "No Output Device",
+    "noOutputDevice": "There is no speaker or headphone output to record. Connect one, or switch back to the microphone in Settings.",
+    "systemAudioSilentTitle": "Nothing Was Playing",
+    "systemAudioSilent": {
+      "generic": "Handy recorded your sound output, but nothing was playing.",
+      "macos": "Handy recorded your sound output, but nothing was playing. If something was, allow Handy in System Settings → Privacy & Security → System Audio Recording."
+    },
+    "systemAudioUnsupportedTitle": "System Audio Not Supported",
+    "systemAudioUnsupported": "Recording what your computer plays needs Windows, or macOS 14.6 or later. Switch back to the microphone in Settings.",
     "recordingFailedTitle": "Failed to Start Recording",
     "modelLoadFailed": "Handy couldn't load this model. Try again or choose a different one.",
     "modelLoadFailedTitle": "Failed to Load Model",

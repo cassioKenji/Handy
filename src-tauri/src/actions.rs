@@ -76,21 +76,25 @@ fn empty_outcome(input_silent: bool) -> TranscriptionOutcome {
     }
 }
 
-/// Ends a dictation that has nothing to type. A microphone that sent only
-/// digital silence (muted, or the wrong default device) gets a notice, so it
-/// doesn't look like the model missed the speech (#1899).
+/// Ends a dictation that has nothing to type. Input that was only digital
+/// silence gets a notice, so it doesn't look like the model missed the
+/// speech (#1899): a muted microphone, or an output with nothing playing.
 fn finish_without_text(
     app: &AppHandle,
     input_silent: bool,
+    from_system_output: bool,
     sample_count: usize,
     stop_time: Instant,
 ) {
     if input_silent {
-        warn!("The microphone sent only digital silence; nothing was transcribed");
-        notices::raise(
-            app,
-            Notice::new(NoticeCode::MicrophoneSilent, NoticeSource::Dictation),
-        );
+        let code = if from_system_output {
+            warn!("The recorded output was silent; nothing was transcribed");
+            NoticeCode::SystemAudioSilent
+        } else {
+            warn!("The microphone sent only digital silence; nothing was transcribed");
+            NoticeCode::MicrophoneSilent
+        };
+        notices::raise(app, Notice::new(code, NoticeSource::Dictation));
     } else {
         utils::hide_recording_overlay(app);
     }
@@ -689,8 +693,11 @@ impl ShortcutAction for TranscribeAction {
             if let Some(err) = recording_error {
                 notices::raise(
                     app,
-                    Notice::new(recording_notice_code(&err), NoticeSource::Dictation)
-                        .with_detail(format!("{err:#}")),
+                    Notice::new(
+                        recording_notice_code(&err, rm.desired_source()),
+                        NoticeSource::Dictation,
+                    )
+                    .with_detail(format!("{err:#}")),
                 );
             }
         }
@@ -758,6 +765,7 @@ impl ShortcutAction for TranscribeAction {
                 // Read now: by the time transcribing ends, another take may
                 // have replaced it.
                 let input_silent = rm.last_input_silent();
+                let from_system_output = rm.last_input_was_system_output();
                 debug!(
                     "Recording stopped and samples retrieved in {:?}, sample count: {}",
                     stop_recording_time.elapsed(),
@@ -777,7 +785,7 @@ impl ShortcutAction for TranscribeAction {
                     // Tear down any streaming worker so its channel doesn't leak
                     // and block the next start_stream.
                     tm.cancel_stream();
-                    finish_without_text(&ah, input_silent, 0, stop_time);
+                    finish_without_text(&ah, input_silent, from_system_output, 0, stop_time);
                 } else {
                     // Save WAV concurrently with transcription
                     let sample_count = samples.len();
@@ -893,7 +901,13 @@ impl ShortcutAction for TranscribeAction {
                             };
 
                             if final_text.is_empty() {
-                                finish_without_text(&ah, input_silent, sample_count, stop_time);
+                                finish_without_text(
+                                    &ah,
+                                    input_silent,
+                                    from_system_output,
+                                    sample_count,
+                                    stop_time,
+                                );
                             } else {
                                 let ah_clone = ah.clone();
                                 let paste_time = Instant::now();

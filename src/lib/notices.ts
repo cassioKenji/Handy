@@ -36,6 +36,21 @@ const NOTICE_DISPLAY: Record<NoticeCode, NoticeDisplay> = {
         defaultValue: t("errors.micPermissionDenied.generic"),
       }),
   },
+  NoOutputDevice: {
+    title: "errors.noOutputDeviceTitle",
+    explanation: (t) => t("errors.noOutputDevice"),
+  },
+  SystemAudioSilent: {
+    title: "errors.systemAudioSilentTitle",
+    explanation: (t) =>
+      t(`errors.systemAudioSilent.${platform()}`, {
+        defaultValue: t("errors.systemAudioSilent.generic"),
+      }),
+  },
+  SystemAudioUnsupported: {
+    title: "errors.systemAudioUnsupportedTitle",
+    explanation: (t) => t("errors.systemAudioUnsupported"),
+  },
   RecordingFailed: {
     title: "errors.recordingFailedTitle",
   },
