@@ -24,8 +24,8 @@ use super::transport::{CaptureTransportState, Routing, write_input_to_ring};
 use super::watchdog::{self, CheckTime, Watchdog};
 use crate::backend::{Backend, BackendError, BackendErrorKind, InputData, InputStream};
 use crate::{
-    Channels, Error, ErrorKind, Format, InputDevice, Permission, RecorderConfig, RecorderInfo,
-    Sink, StartError, Stopped,
+    Channels, DeviceKind, Error, ErrorKind, Format, InputDevice, Permission, RecorderConfig,
+    RecorderInfo, Sink, StartError, Stopped,
 };
 
 /// Absorbs consumer stalls.
@@ -377,8 +377,15 @@ impl<S: Sink> Engine<S> {
         if let Some(error) = self.shared.failure() {
             return Err(StartError { error, sink });
         }
-        // Revoked while open; see `denial_is_silent`.
-        if self.backend.denial_is_silent() && self.backend.permission_status() == Permission::Denied
+        // Revoked while open; see `denial_is_silent`. Not for loopback.
+        let is_loopback = self
+            .shared
+            .device
+            .get()
+            .is_some_and(|d| d.kind == DeviceKind::Loopback);
+        if !is_loopback
+            && self.backend.denial_is_silent()
+            && self.backend.permission_status() == Permission::Denied
         {
             let error = self.shared.fail(permission_denied(
                 self.shared.error(ErrorKind::PermissionDenied),
@@ -597,7 +604,12 @@ fn runtime_error(backend: &dyn Backend, shared: &Shared, error: BackendError) ->
         _ => ErrorKind::Backend,
     };
     // WASAPI fails a revoked stream with the unplug code; relabel only that.
+    let is_loopback = shared
+        .device
+        .get()
+        .is_some_and(|d| d.kind == DeviceKind::Loopback);
     let kind = if kind == ErrorKind::DeviceLost
+        && !is_loopback
         && !backend.denial_is_silent()
         && backend.permission_status() == Permission::Denied
     {
@@ -627,8 +639,12 @@ fn open_stream(
         .map_err(|e| open_error(e, None))?;
     let info = device.info().clone();
     let _ = shared.device.set(info.clone());
-    // See `denial_is_silent`.
-    if backend.denial_is_silent() && backend.permission_status() == Permission::Denied {
+    // See `denial_is_silent`. Microphone permission says nothing about
+    // recording an output.
+    if info.kind != DeviceKind::Loopback
+        && backend.denial_is_silent()
+        && backend.permission_status() == Permission::Denied
+    {
         return Err(permission_denied(shared.error(ErrorKind::PermissionDenied)));
     }
     let device_format = device.format();
