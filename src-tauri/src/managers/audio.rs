@@ -932,7 +932,8 @@ impl AudioRecordingManager {
     /// restore it instead of unconditionally unmuting.
     pub fn apply_mute(&self) {
         let settings = get_settings(&self.app_handle);
-        if !settings.mute_while_recording {
+        // Muting the system would silence the very output being recorded.
+        if !settings.mute_while_recording || self.capturing_system_output() {
             return;
         }
 

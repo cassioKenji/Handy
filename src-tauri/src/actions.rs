@@ -660,7 +660,11 @@ impl ShortcutAction for TranscribeAction {
                     // first real input callback rather than Stream::play() or a
                     // fixed delay. The helper returns immediately when feedback
                     // is disabled; mute still follows the same readiness point.
-                    if rm_clone.is_recording_readiness_current(generation) {
+                    // A sound played while recording an output would be
+                    // transcribed.
+                    if rm_clone.is_recording_readiness_current(generation)
+                        && !rm_clone.capturing_system_output()
+                    {
                         play_feedback_sound_blocking(&app_clone, SoundType::Start);
                     }
                     if rm_clone.is_recording_readiness_current(generation) {
@@ -732,8 +736,11 @@ impl ShortcutAction for TranscribeAction {
         // Unmute before playing audio feedback so the stop sound is audible
         rm.remove_mute();
 
-        // Play audio feedback for recording stop
-        play_feedback_sound(app, SoundType::Stop);
+        // Play audio feedback for recording stop (not while recording an
+        // output: the recording may still catch it).
+        if !rm.capturing_system_output() {
+            play_feedback_sound(app, SoundType::Stop);
+        }
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process;
