@@ -463,6 +463,19 @@
       "volume": {
         "title": "Volume",
         "description": "Ajustar o volume dos sons de feedback de áudio"
+      },
+      "inputSource": {
+        "title": "Fonte de Entrada",
+        "description": "Gravar de um microfone, ou do que o computador está tocando",
+        "microphone": "Microfone",
+        "systemOutput": "Saída do Sistema",
+        "unsupported": "Gravar o que o computador toca exige macOS 14.6 ou mais novo"
+      },
+      "systemOutput": {
+        "title": "Saída a Gravar",
+        "description": "Quais alto-falantes ou fones gravar",
+        "placeholder": "Selecione a saída...",
+        "loading": "Carregando..."
       }
     },
     "advanced": {
@@ -957,7 +970,16 @@
     "filePostProcessFailedTitle": "Transcrito sem pós-processamento",
     "filePostProcessFailed": "O pós-processamento não terminou, então a transcrição foi salva como está.",
     "fileTranscriptionFailedTitle": "Falha na transcrição do arquivo",
-    "transcriptionFailedTitle": "Falha na transcrição"
+    "transcriptionFailedTitle": "Falha na transcrição",
+    "noOutputDeviceTitle": "Nenhuma Saída de Áudio",
+    "noOutputDevice": "Não há alto-falante ou fone para gravar. Conecte um, ou volte para o microfone nas Configurações.",
+    "systemAudioSilentTitle": "Nada Estava Tocando",
+    "systemAudioSilent": {
+      "generic": "O Handy gravou a saída de som, mas nada estava tocando.",
+      "macos": "O Handy gravou a saída de som, mas nada estava tocando. Se algo estava, permita o Handy em Ajustes do Sistema → Privacidade e Segurança → Gravação de Áudio do Sistema."
+    },
+    "systemAudioUnsupportedTitle": "Áudio do Sistema Indisponível",
+    "systemAudioUnsupported": "Gravar o que o computador toca exige Windows, ou macOS 14.6 ou mais novo. Volte para o microfone nas Configurações."
   },
   "notices": {
     "errorOne": "{{n}} erro",

@@ -463,6 +463,19 @@
       "volume": {
         "title": "볼륨",
         "description": "오디오 피드백 사운드의 볼륨 조절"
+      },
+      "inputSource": {
+        "title": "Input Source",
+        "description": "Record from a microphone, or from what your computer is playing",
+        "microphone": "Microphone",
+        "systemOutput": "System Output",
+        "unsupported": "Recording what your computer plays needs macOS 14.6 or later"
+      },
+      "systemOutput": {
+        "title": "Output to Record",
+        "description": "Which speakers or headphones to record",
+        "placeholder": "Select output...",
+        "loading": "Loading..."
       }
     },
     "advanced": {
@@ -957,7 +970,16 @@
     "filePostProcessFailedTitle": "후처리 없이 받아씀",
     "filePostProcessFailed": "후처리가 완료되지 않아 받아쓰기 결과를 그대로 저장했습니다.",
     "fileTranscriptionFailedTitle": "파일 음성 인식 실패",
-    "transcriptionFailedTitle": "음성 인식 실패"
+    "transcriptionFailedTitle": "음성 인식 실패",
+    "noOutputDeviceTitle": "No Output Device",
+    "noOutputDevice": "There is no speaker or headphone output to record. Connect one, or switch back to the microphone in Settings.",
+    "systemAudioSilentTitle": "Nothing Was Playing",
+    "systemAudioSilent": {
+      "generic": "Handy recorded your sound output, but nothing was playing.",
+      "macos": "Handy recorded your sound output, but nothing was playing. If something was, allow Handy in System Settings → Privacy & Security → System Audio Recording."
+    },
+    "systemAudioUnsupportedTitle": "System Audio Not Supported",
+    "systemAudioUnsupported": "Recording what your computer plays needs Windows, or macOS 14.6 or later. Switch back to the microphone in Settings."
   },
   "notices": {
     "errorOne": "오류 {{n}}개",

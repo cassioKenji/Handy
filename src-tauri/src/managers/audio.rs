@@ -9,11 +9,11 @@ use crate::audio_toolkit::{
 use crate::helpers::clamshell;
 use crate::managers::transcription::StreamRouter;
 use crate::notices::NoticeCode;
-use crate::settings::{get_settings, write_settings, AppSettings, VadBackend};
+use crate::settings::{get_settings, write_settings, AppSettings, InputSource, VadBackend};
 use crate::utils;
 use handy_recorder::{Channels, EndReason, ErrorKind, Recorder, RecorderConfig, StartError};
 use log::{debug, error, info, trace, warn};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
@@ -21,6 +21,22 @@ use tauri::{Emitter, Manager};
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const SILERO_VAD_THRESHOLD: f32 = 0.3;
 const EARSHOT_VAD_THRESHOLD: f32 = 0.5;
+
+/// `InputSource` in an atomic, so hot paths read it without a lock.
+fn source_to_u8(source: InputSource) -> u8 {
+    match source {
+        InputSource::Microphone => 0,
+        InputSource::SystemOutput => 1,
+    }
+}
+
+fn source_from_u8(value: u8) -> InputSource {
+    if value == 1 {
+        InputSource::SystemOutput
+    } else {
+        InputSource::Microphone
+    }
+}
 
 fn set_mute(mute: bool) {
     // Expected behavior:
@@ -259,24 +275,133 @@ struct MuteState {
     prev_muted: Option<bool>,
 }
 
-/// The persisted microphone preference currently in effect. Clamshell and
-/// regular selections are kept distinct so losing a clamshell-only device does
-/// not erase the user's normal microphone preference.
-enum DesiredMicrophone {
-    Default,
-    Selected(String),
+/// The device the settings ask for now. Clamshell and regular selections
+/// stay distinct so losing a clamshell-only device does not erase the
+/// user's normal microphone preference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DesiredDevice {
+    DefaultMicrophone,
+    Microphone(String),
     Clamshell(String),
+    DefaultLoopback,
+    Loopback(String),
 }
 
-/// Result of resolving the persisted preference to a recorder device ID.
-/// `device: None` opens the system default. The unavailable name is populated
-/// only when enumeration succeeded and confirmed that the user's regular
-/// selected microphone is missing.
-struct MicrophoneResolution {
+impl DesiredDevice {
+    fn source(&self) -> InputSource {
+        match self {
+            Self::DefaultLoopback | Self::Loopback(_) => InputSource::SystemOutput,
+            _ => InputSource::Microphone,
+        }
+    }
+
+    /// The cache key for a named device; defaults are never cached (the
+    /// default changes under us).
+    fn cache_key(&self) -> Option<CacheKey> {
+        match self {
+            Self::Microphone(name) | Self::Clamshell(name) => Some(CacheKey {
+                source: InputSource::Microphone,
+                name: name.clone(),
+            }),
+            Self::Loopback(name) => Some(CacheKey {
+                source: InputSource::SystemOutput,
+                name: name.clone(),
+            }),
+            Self::DefaultMicrophone | Self::DefaultLoopback => None,
+        }
+    }
+}
+
+/// A microphone and an output can share a name ("Realtek Audio").
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CacheKey {
+    source: InputSource,
+    name: String,
+}
+
+/// What `pick_device` needs from a listed device. `InputDevice` is
+/// non-exhaustive, so tests can't build one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeviceEntry {
+    id: String,
+    name: String,
+    is_default: bool,
+}
+
+impl From<handy_recorder::InputDevice> for DeviceEntry {
+    fn from(d: handy_recorder::InputDevice) -> Self {
+        Self {
+            id: d.id,
+            name: d.name,
+            is_default: d.is_default,
+        }
+    }
+}
+
+/// The persisted preference resolved to a recorder device ID.
+/// `device: None` opens the system's default microphone (never used for
+/// loopback).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeviceResolution {
     device: Option<String>,
+    source: InputSource,
     /// The ID came from `cached_device`, so it may be stale.
     from_cache: bool,
-    unavailable_selected_microphone: Option<String>,
+    /// The user's named selection that enumeration confirmed is missing;
+    /// the caller resets that setting once the fallback opens.
+    unavailable: Option<(InputSource, String)>,
+}
+
+/// Picks the device for `desired` from a listing of its kind (microphones,
+/// or loopback outputs). `devices: None` means listing failed. Pure, so it
+/// can be tested without hardware.
+fn pick_device(
+    desired: &DesiredDevice,
+    devices: Option<&[DeviceEntry]>,
+) -> Result<DeviceResolution, CaptureSourceError> {
+    let resolved = |device: Option<String>, unavailable| DeviceResolution {
+        device,
+        source: desired.source(),
+        from_cache: false,
+        unavailable,
+    };
+    match desired {
+        DesiredDevice::DefaultMicrophone => Ok(resolved(None, None)),
+        DesiredDevice::Microphone(name) | DesiredDevice::Clamshell(name) => {
+            let Some(devices) = devices else {
+                // A listing error may be transient: keep the preference.
+                return Ok(resolved(None, None));
+            };
+            match devices.iter().find(|d| d.name == *name) {
+                Some(d) => Ok(resolved(Some(d.id.clone()), None)),
+                None => {
+                    let unavailable = matches!(desired, DesiredDevice::Microphone(_))
+                        .then(|| (InputSource::Microphone, name.clone()));
+                    Ok(resolved(None, unavailable))
+                }
+            }
+        }
+        DesiredDevice::DefaultLoopback | DesiredDevice::Loopback(_) => {
+            let devices = devices.ok_or_else(|| {
+                CaptureSourceError::NoOutputDevice("listing outputs failed".into())
+            })?;
+            if let DesiredDevice::Loopback(name) = desired {
+                if let Some(d) = devices.iter().find(|d| d.name == *name) {
+                    return Ok(resolved(Some(d.id.clone()), None));
+                }
+            }
+            let fallback = devices
+                .iter()
+                .find(|d| d.is_default)
+                .or_else(|| devices.first())
+                .ok_or_else(|| CaptureSourceError::NoOutputDevice(String::new()))?;
+            let unavailable = match desired {
+                DesiredDevice::Loopback(name) => Some((InputSource::SystemOutput, name.clone())),
+                _ => None,
+            };
+            Ok(resolved(Some(fallback.id.clone()), unavailable))
+        }
+    }
 }
 
 /// The VAD detector. A recording borrows it for its sink and `stop` hands it
@@ -297,6 +422,8 @@ struct OpenMicrophone {
     /// Set when this recorder fails. Its own flag, so a failure handler that
     /// runs late can't mark a replacement recorder failed.
     failed: Arc<AtomicBool>,
+    /// What this recorder records: a microphone, or a sound card output.
+    source: InputSource,
 }
 
 impl OpenMicrophone {
@@ -305,19 +432,57 @@ impl OpenMicrophone {
     }
 }
 
-/// The notice for a recording that couldn't start.
-pub fn recording_notice_code(error: &anyhow::Error) -> NoticeCode {
-    match error
+/// The notice for a recording that couldn't start. `source` is what the
+/// settings asked for: no stream may have opened.
+pub fn recording_notice_code(error: &anyhow::Error, source: InputSource) -> NoticeCode {
+    if let Some(error) = error.downcast_ref::<CaptureSourceError>() {
+        return match error {
+            CaptureSourceError::NoOutputDevice(_) => NoticeCode::NoOutputDevice,
+            CaptureSourceError::Unsupported => NoticeCode::SystemAudioUnsupported,
+        };
+    }
+    let kind = error
         .downcast_ref::<handy_recorder::Error>()
-        .map(handy_recorder::Error::kind)
-    {
-        Some(ErrorKind::PermissionDenied) => NoticeCode::MicPermissionDenied,
-        // A missing selected microphone falls back to the default, so this
-        // means there is no input device at all.
-        Some(ErrorKind::DeviceUnavailable) => NoticeCode::NoMicrophone,
-        _ => NoticeCode::RecordingFailed,
+        .map(handy_recorder::Error::kind);
+    match source {
+        // Microphone permission says nothing about an output.
+        InputSource::SystemOutput => match kind {
+            Some(ErrorKind::DeviceUnavailable) => NoticeCode::NoOutputDevice,
+            _ => NoticeCode::RecordingFailed,
+        },
+        InputSource::Microphone => match kind {
+            Some(ErrorKind::PermissionDenied) => NoticeCode::MicPermissionDenied,
+            // A missing selected microphone falls back to the default, so this
+            // means there is no input device at all.
+            Some(ErrorKind::DeviceUnavailable) => NoticeCode::NoMicrophone,
+            _ => NoticeCode::RecordingFailed,
+        },
     }
 }
+
+/// A recording source Handy can't open, decided before the recorder is
+/// asked. `handy_recorder::Error` can't be built outside the crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CaptureSourceError {
+    /// No output to record: none listed, or listing failed (the detail).
+    NoOutputDevice(String),
+    /// This OS can't record its output (macOS before 14.6).
+    Unsupported,
+}
+
+impl std::fmt::Display for CaptureSourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoOutputDevice(detail) if detail.is_empty() => {
+                f.write_str("no output device to record")
+            }
+            Self::NoOutputDevice(detail) => write!(f, "no output device to record: {detail}"),
+            Self::Unsupported => f.write_str("this OS can't record its sound output"),
+        }
+    }
+}
+
+impl std::error::Error for CaptureSourceError {}
 
 /* ──────────────────────────────────────────────────────────────── */
 
@@ -418,7 +583,11 @@ fn open_microphone(config: RecorderConfig) -> Result<OpenMicrophone, handy_recor
         // start; a recording in progress keeps the audio captured before it.
         move |_| failed.store(true, Ordering::Release)
     })?;
-    Ok(OpenMicrophone { recorder, failed })
+    Ok(OpenMicrophone {
+        recorder,
+        failed,
+        source: InputSource::Microphone,
+    })
 }
 
 /// Opens with the selected channel, or averages all channels if the device
@@ -504,15 +673,23 @@ pub struct AudioRecordingManager {
     /// stopped or cancelled. This prevents a slow device from producing a late
     /// "ready" indication for a session the user already ended.
     capture_generation: Arc<AtomicU64>,
-    /// Resolution of a *named* microphone (selected or clamshell) to its
-    /// recorder device ID, cached so on-demand recording starts skip an extra
-    /// device enumeration. Keyed by the resolved name, so a settings change
+    /// Resolution of a *named* microphone (selected or clamshell) or output to
+    /// its recorder device ID, cached so on-demand recording starts skip an
+    /// extra device enumeration. Keyed by source and name, so a microphone ID
+    /// is never reused for an output with the same name, and a settings change
     /// misses naturally; cleared when an open fails (device unplugged) so the
     /// retry re-enumerates. The system-default case is never cached — the
     /// recorder resolves the current default itself.
-    cached_device: Arc<Mutex<Option<(String, String)>>>,
+    cached_device: Arc<Mutex<Option<(CacheKey, String)>>>,
     /// The last recording was all-zero samples, not just audio without speech.
     last_input_silent: Arc<AtomicBool>,
+    /// The source of the open (or last opened) stream. Mute, feedback
+    /// sounds and notices follow what is actually recording, not the
+    /// setting, which can change mid-recording.
+    open_source: Arc<AtomicU8>,
+    /// The source of the last finished recording, read with
+    /// `last_input_silent`.
+    last_input_source: Arc<AtomicU8>,
 }
 
 impl AudioRecordingManager {
@@ -555,6 +732,8 @@ impl AudioRecordingManager {
             capture_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
             last_input_silent: Arc::new(AtomicBool::new(false)),
+            open_source: Arc::new(AtomicU8::new(0)),
+            last_input_source: Arc::new(AtomicU8::new(0)),
         };
 
         // Always-on?  Open immediately.
@@ -567,10 +746,16 @@ impl AudioRecordingManager {
 
     /* ---------- helper methods --------------------------------------------- */
 
-    /// The persisted microphone preference currently in effect. Only runs the
+    /// The persisted device preference currently in effect. Only runs the
     /// clamshell probe (an `ioreg` subprocess, ~10-20ms) when a clamshell
-    /// microphone is actually configured.
-    fn desired_microphone(&self, settings: &AppSettings) -> DesiredMicrophone {
+    /// microphone is actually configured, and never in output mode.
+    fn desired_device(&self, settings: &AppSettings) -> DesiredDevice {
+        if settings.input_source == InputSource::SystemOutput {
+            return match &settings.selected_loopback_device {
+                Some(name) => DesiredDevice::Loopback(name.clone()),
+                None => DesiredDevice::DefaultLoopback,
+            };
+        }
         if let Some(clamshell_microphone) = &settings.clamshell_microphone {
             let clamshell_started = Instant::now();
             let is_clamshell = clamshell::is_clamshell().unwrap_or(false);
@@ -580,102 +765,101 @@ impl AudioRecordingManager {
                 is_clamshell
             );
             if is_clamshell {
-                return DesiredMicrophone::Clamshell(clamshell_microphone.clone());
+                return DesiredDevice::Clamshell(clamshell_microphone.clone());
             }
         }
         match &settings.selected_microphone {
-            Some(name) => DesiredMicrophone::Selected(name.clone()),
-            None => DesiredMicrophone::Default,
+            Some(name) => DesiredDevice::Microphone(name.clone()),
+            None => DesiredDevice::DefaultMicrophone,
         }
+    }
+
+    /// The source the settings ask for now (for classifying a failed start
+    /// before any stream opened).
+    pub fn desired_source(&self) -> InputSource {
+        get_settings(&self.app_handle).input_source
     }
 
     pub fn invalidate_device_cache(&self) {
         *self.cached_device.lock().unwrap() = None;
     }
 
-    fn resolve_microphone_device(&self, settings: &AppSettings) -> MicrophoneResolution {
-        let desired = self.desired_microphone(settings);
-        let (device_name, selected_microphone) = match desired {
-            DesiredMicrophone::Default => {
-                debug!("device resolve: no mic configured -> system default");
-                return MicrophoneResolution {
-                    device: None,
-                    from_cache: false,
-                    unavailable_selected_microphone: None,
-                };
-            }
-            DesiredMicrophone::Selected(name) => (name.clone(), Some(name)),
-            DesiredMicrophone::Clamshell(name) => (name, None),
-        };
+    fn resolve_device(
+        &self,
+        settings: &AppSettings,
+    ) -> Result<DeviceResolution, CaptureSourceError> {
+        let desired = self.desired_device(settings);
+        if desired == DesiredDevice::DefaultMicrophone {
+            debug!("device resolve: no mic configured -> system default");
+            return pick_device(&desired, None);
+        }
+        if desired.source() == InputSource::SystemOutput && !handy_recorder::loopback_supported() {
+            return Err(CaptureSourceError::Unsupported);
+        }
 
         // Cache hit: skip the enumeration. A stale ID (device unplugged)
         // fails at open, where the caller invalidates and retries fresh.
-        if let Some((cached_name, id)) = self.cached_device.lock().unwrap().as_ref() {
-            if *cached_name == device_name {
-                debug!("device resolve: cache hit for '{}'", device_name);
-                return MicrophoneResolution {
-                    device: Some(id.clone()),
-                    from_cache: true,
-                    unavailable_selected_microphone: None,
-                };
+        let key = desired.cache_key();
+        if let Some(key) = &key {
+            if let Some((cached_key, id)) = self.cached_device.lock().unwrap().as_ref() {
+                if cached_key == key {
+                    debug!("device resolve: cache hit for '{}'", key.name);
+                    return Ok(DeviceResolution {
+                        device: Some(id.clone()),
+                        source: desired.source(),
+                        from_cache: true,
+                        unavailable: None,
+                    });
+                }
             }
         }
 
-        // Only report a selected microphone as unavailable when enumeration
-        // itself succeeded. A backend enumeration error may be transient and
-        // must not erase the user's persisted preference.
         let enumerate_started = Instant::now();
-        let (device, enumeration_succeeded) = match handy_recorder::list_input_devices() {
-            Ok(devices) => (
-                devices
-                    .into_iter()
-                    .find(|d| d.name == device_name)
-                    .map(|d| d.id),
-                true,
-            ),
+        let listed = match desired.source() {
+            InputSource::Microphone => handy_recorder::list_input_devices(),
+            InputSource::SystemOutput => handy_recorder::list_loopback_devices(),
+        };
+        let devices: Option<Vec<DeviceEntry>> = match listed {
+            Ok(devices) => Some(devices.into_iter().map(DeviceEntry::from).collect()),
             Err(e) => {
-                debug!("Failed to list devices, using default: {}", e);
-                (None, false)
+                debug!("Failed to list devices: {}", e);
+                None
             }
         };
+        let resolution = pick_device(&desired, devices.as_deref())?;
         debug!(
-            "device resolve: enumerate={:?} (found={})",
+            "device resolve: enumerate={:?} (device={:?}, fallback={})",
             enumerate_started.elapsed(),
-            device.is_some()
+            resolution.device,
+            resolution.unavailable.is_some()
         );
-        if let Some(id) = &device {
-            *self.cached_device.lock().unwrap() = Some((device_name, id.clone()));
+        // Cache only the user's own named device, never a fallback.
+        if let (Some(key), Some(id), None) = (key, &resolution.device, &resolution.unavailable) {
+            *self.cached_device.lock().unwrap() = Some((key, id.clone()));
         }
-
-        let unavailable_selected_microphone = if enumeration_succeeded && device.is_none() {
-            selected_microphone
-        } else {
-            None
-        };
-        MicrophoneResolution {
-            device,
-            from_cache: false,
-            unavailable_selected_microphone,
-        }
+        Ok(resolution)
     }
 
     /// Keep persisted settings and the UI aligned with a successful runtime
-    /// fallback. Re-read first so recovery cannot clear a microphone the user
+    /// fallback. Re-read first so recovery cannot clear a device the user
     /// selected concurrently while the stream was being rebuilt.
-    fn persist_default_microphone_after_fallback(&self, unavailable_name: &str) {
+    fn persist_default_after_fallback(&self, source: InputSource, unavailable_name: &str) {
         let mut settings = get_settings(&self.app_handle);
-        if settings.selected_microphone.as_deref() != Some(unavailable_name) {
+        let (slot, setting) = match source {
+            InputSource::Microphone => (&mut settings.selected_microphone, "selected_microphone"),
+            InputSource::SystemOutput => (
+                &mut settings.selected_loopback_device,
+                "selected_loopback_device",
+            ),
+        };
+        if slot.as_deref() != Some(unavailable_name) {
             return;
         }
-
-        settings.selected_microphone = None;
+        *slot = None;
         write_settings(&self.app_handle, settings);
         let _ = self.app_handle.emit(
             "settings-changed",
-            serde_json::json!({
-                "setting": "selected_microphone",
-                "value": "Default"
-            }),
+            serde_json::json!({ "setting": setting, "value": "Default" }),
         );
     }
 
@@ -762,7 +946,8 @@ impl AudioRecordingManager {
     /// restore it instead of unconditionally unmuting.
     pub fn apply_mute(&self) {
         let settings = get_settings(&self.app_handle);
-        if !settings.mute_while_recording {
+        // Muting the system would silence the very output being recorded.
+        if !settings.mute_while_recording || self.capturing_system_output() {
             return;
         }
 
@@ -860,7 +1045,7 @@ impl AudioRecordingManager {
         // input devices at all fails inside open() with `DeviceUnavailable`.
         let settings = get_settings(&self.app_handle);
         let resolve_started = Instant::now();
-        let mut resolution = self.resolve_microphone_device(&settings);
+        let mut resolution = self.resolve_device(&settings)?;
         let resolve_elapsed = resolve_started.elapsed();
 
         // Ensure VAD is loaded if it wasn't for whatever reason; its frame
@@ -869,10 +1054,16 @@ impl AudioRecordingManager {
         let frames_per_chunk = self.vad_frame_samples()?;
         let vad_elapsed = vad_started.elapsed();
 
-        let channel = *self.selected_channel.lock().unwrap();
-        let take_headset = self.airpods_mode.load(Ordering::Acquire);
+        // An output is mixed to mono, and AirPods mode is about microphones.
+        let (channel, take_headset) = match resolution.source {
+            InputSource::SystemOutput => (None, false),
+            InputSource::Microphone => (
+                *self.selected_channel.lock().unwrap(),
+                self.airpods_mode.load(Ordering::Acquire),
+            ),
+        };
         let open_started = Instant::now();
-        let microphone = match open_microphone_on_channel(
+        let mut microphone = match open_microphone_on_channel(
             resolution.device.clone(),
             channel,
             take_headset,
@@ -884,7 +1075,7 @@ impl AudioRecordingManager {
                 // surfacing the error.
                 warn!("Recorder open failed ({first_err}); re-resolving device and retrying once");
                 self.invalidate_device_cache();
-                resolution = self.resolve_microphone_device(&settings);
+                resolution = self.resolve_device(&settings)?;
                 open_microphone_on_channel(
                     resolution.device.clone(),
                     channel,
@@ -894,6 +1085,9 @@ impl AudioRecordingManager {
             }
             result => result,
         }?;
+        microphone.source = resolution.source;
+        self.open_source
+            .store(source_to_u8(resolution.source), Ordering::Release);
         debug!(
             "mic stream breakdown: device_resolve={:?} vad_ensure={:?} open={:?}",
             resolve_elapsed,
@@ -903,10 +1097,10 @@ impl AudioRecordingManager {
         *self.recorder.lock().unwrap() = Some(microphone);
 
         *open_flag = true;
-        if let Some(unavailable_name) = resolution.unavailable_selected_microphone {
-            // Do this only after the default stream opened successfully. A
-            // failed fallback must not erase the user's microphone preference.
-            self.persist_default_microphone_after_fallback(&unavailable_name);
+        if let Some((source, unavailable_name)) = resolution.unavailable.take() {
+            // Do this only after the fallback stream opened successfully. A
+            // failed fallback must not erase the user's preference.
+            self.persist_default_after_fallback(source, &unavailable_name);
         }
         // The stream is running, but the device may not be delivering audio
         // yet (Bluetooth can take seconds); a recording's readiness waits for
@@ -979,12 +1173,16 @@ impl AudioRecordingManager {
                 self.return_vad(captured.vad);
                 self.last_input_silent
                     .store(captured.input_silent, Ordering::Release);
+                self.last_input_source
+                    .store(source_to_u8(microphone.source), Ordering::Release);
                 captured.samples
             }
             Err(e) => {
                 // The recording and its detector are lost with the sink.
                 error!("Failed to stop recording: {e}");
                 self.last_input_silent.store(false, Ordering::Release);
+                self.last_input_source
+                    .store(source_to_u8(microphone.source), Ordering::Release);
                 if e.kind() != ErrorKind::NotRecording {
                     microphone.failed.store(true, Ordering::Release);
                 }
@@ -1233,6 +1431,16 @@ impl AudioRecordingManager {
     }
 
     /// Whether the last stopped recording's device sent only digital silence.
+    /// The open (or last opened) stream records a sound card output.
+    pub fn capturing_system_output(&self) -> bool {
+        source_from_u8(self.open_source.load(Ordering::Acquire)) == InputSource::SystemOutput
+    }
+
+    /// The last finished recording came from a sound card output.
+    pub fn last_input_was_system_output(&self) -> bool {
+        source_from_u8(self.last_input_source.load(Ordering::Acquire)) == InputSource::SystemOutput
+    }
+
     pub fn last_input_silent(&self) -> bool {
         self.last_input_silent.load(Ordering::Acquire)
     }
@@ -1361,6 +1569,86 @@ impl AudioRecordingManager {
 mod tests {
     use super::*;
 
+    fn entry(id: &str, name: &str, is_default: bool) -> DeviceEntry {
+        DeviceEntry {
+            id: id.into(),
+            name: name.into(),
+            is_default,
+        }
+    }
+
+    #[test]
+    fn a_named_output_resolves_to_its_id() {
+        let outs = [
+            entry("loopback:a", "Speakers", true),
+            entry("loopback:b", "Headphones", false),
+        ];
+        let r = pick_device(&DesiredDevice::Loopback("Headphones".into()), Some(&outs)).unwrap();
+        assert_eq!(r.device.as_deref(), Some("loopback:b"));
+        assert_eq!(r.source, InputSource::SystemOutput);
+        assert_eq!(r.unavailable, None);
+    }
+
+    #[test]
+    fn the_default_output_is_resolved_explicitly() {
+        let outs = [
+            entry("loopback:a", "Speakers", false),
+            entry("loopback:b", "HDMI", true),
+        ];
+        let r = pick_device(&DesiredDevice::DefaultLoopback, Some(&outs)).unwrap();
+        // Never None: None would open the default *microphone*.
+        assert_eq!(r.device.as_deref(), Some("loopback:b"));
+    }
+
+    #[test]
+    fn a_missing_output_falls_back_to_the_default_and_reports_it() {
+        let outs = [entry("loopback:a", "Speakers", true)];
+        let r = pick_device(&DesiredDevice::Loopback("Gone".into()), Some(&outs)).unwrap();
+        assert_eq!(r.device.as_deref(), Some("loopback:a"));
+        assert_eq!(
+            r.unavailable,
+            Some((InputSource::SystemOutput, "Gone".into()))
+        );
+    }
+
+    #[test]
+    fn no_outputs_is_an_error_not_the_microphone() {
+        assert_eq!(
+            pick_device(&DesiredDevice::DefaultLoopback, Some(&[])),
+            Err(CaptureSourceError::NoOutputDevice(String::new()))
+        );
+        assert!(matches!(
+            pick_device(&DesiredDevice::Loopback("x".into()), None),
+            Err(CaptureSourceError::NoOutputDevice(_))
+        ));
+    }
+
+    #[test]
+    fn microphone_resolution_is_unchanged() {
+        let mics = [entry("m1", "USB Mic", false)];
+        let found = pick_device(&DesiredDevice::Microphone("USB Mic".into()), Some(&mics)).unwrap();
+        assert_eq!(found.device.as_deref(), Some("m1"));
+        let missing = pick_device(&DesiredDevice::Microphone("Gone".into()), Some(&mics)).unwrap();
+        assert_eq!(missing.device, None);
+        assert_eq!(
+            missing.unavailable,
+            Some((InputSource::Microphone, "Gone".into()))
+        );
+        // A clamshell device going missing doesn't reset the regular selection.
+        let clam = pick_device(&DesiredDevice::Clamshell("Gone".into()), Some(&mics)).unwrap();
+        assert_eq!(clam.unavailable, None);
+        // A listing error keeps the preference.
+        let failed = pick_device(&DesiredDevice::Microphone("USB Mic".into()), None).unwrap();
+        assert_eq!((failed.device, failed.unavailable), (None, None));
+    }
+
+    #[test]
+    fn a_microphone_and_an_output_with_the_same_name_have_different_cache_keys() {
+        let mic = DesiredDevice::Microphone("Realtek Audio".into()).cache_key();
+        let out = DesiredDevice::Loopback("Realtek Audio".into()).cache_key();
+        assert_ne!(mic, out);
+    }
+
     /// A recorder error, without touching a device: the request is rejected
     /// before one is opened.
     fn recorder_error() -> handy_recorder::Error {
@@ -1386,13 +1674,43 @@ mod tests {
                 .map(handy_recorder::Error::kind),
             Some(ErrorKind::UnsupportedFormat)
         );
-        assert_eq!(recording_notice_code(&wrapped), NoticeCode::RecordingFailed);
+        assert_eq!(
+            recording_notice_code(&wrapped, InputSource::Microphone),
+            NoticeCode::RecordingFailed
+        );
+    }
+
+    #[test]
+    fn capture_source_errors_map_to_their_notices() {
+        let no_output = anyhow::Error::new(CaptureSourceError::NoOutputDevice(String::new()))
+            .context("Failed to open recorder");
+        assert_eq!(
+            recording_notice_code(&no_output, InputSource::SystemOutput),
+            NoticeCode::NoOutputDevice
+        );
+        let unsupported = anyhow::Error::new(CaptureSourceError::Unsupported);
+        assert_eq!(
+            recording_notice_code(&unsupported, InputSource::SystemOutput),
+            NoticeCode::SystemAudioUnsupported
+        );
+    }
+
+    #[test]
+    fn other_errors_while_recording_an_output_are_generic() {
+        let wrapped = anyhow::Error::new(recorder_error());
+        assert_eq!(
+            recording_notice_code(&wrapped, InputSource::SystemOutput),
+            NoticeCode::RecordingFailed
+        );
     }
 
     #[test]
     fn errors_from_outside_the_recorder_are_unknown() {
         assert_eq!(
-            recording_notice_code(&anyhow::anyhow!("Already recording")),
+            recording_notice_code(
+                &anyhow::anyhow!("Already recording"),
+                InputSource::Microphone
+            ),
             NoticeCode::RecordingFailed
         );
     }

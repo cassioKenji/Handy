@@ -1,7 +1,7 @@
 use crate::audio_feedback;
 use crate::audio_toolkit::audio::list_output_devices;
 use crate::managers::audio::{AudioRecordingManager, MicrophoneMode};
-use crate::settings::{get_settings, write_settings};
+use crate::settings::{get_settings, write_settings, InputSource};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -258,6 +258,91 @@ pub fn get_selected_microphone(app: AppHandle) -> Result<String, String> {
     let settings = get_settings(&app);
     Ok(settings
         .selected_microphone
+        .unwrap_or_else(|| "default".to_string()))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_input_source(app: AppHandle) -> InputSource {
+    get_settings(&app).input_source
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_input_source(app: AppHandle, source: InputSource) -> Result<(), String> {
+    let mut settings = get_settings(&app);
+    settings.input_source = source;
+    write_settings(&app, settings);
+
+    // Reopening can block (CoreAudio, WASAPI): keep it off the main run loop.
+    let rm = app.state::<Arc<AudioRecordingManager>>().inner().clone();
+    tokio::task::spawn_blocking(move || rm.update_selected_device())
+        .await
+        .map_err(|e| format!("audio task join failed: {}", e))?
+        .map_err(|e| format!("Failed to switch input source: {}", e))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn is_loopback_supported() -> bool {
+    handy_recorder::loopback_supported()
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_available_loopback_devices() -> Result<Vec<AudioDevice>, String> {
+    // cpal device enumeration can stall — run it off the webview/main run loop.
+    tokio::task::spawn_blocking(|| {
+        let devices = handy_recorder::list_loopback_devices()
+            .map_err(|e| format!("Failed to list output devices: {}", e))?;
+
+        let mut result = vec![AudioDevice {
+            index: "default".to_string(),
+            name: "Default".to_string(),
+            is_default: true,
+        }];
+        result.extend(devices.into_iter().map(|d| AudioDevice {
+            index: d.id,
+            name: d.name,
+            is_default: false, // The explicit default is handled separately
+        }));
+        Ok::<_, String>(result)
+    })
+    .await
+    .map_err(|e| format!("audio task join failed: {}", e))?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_selected_loopback_device(
+    app: AppHandle,
+    device_name: String,
+) -> Result<(), String> {
+    let mut settings = get_settings(&app);
+    settings.selected_loopback_device = if device_name == "default" {
+        None
+    } else {
+        Some(device_name)
+    };
+    let recording_output = settings.input_source == InputSource::SystemOutput;
+    write_settings(&app, settings);
+
+    // The open stream only changes when it records an output.
+    if !recording_output {
+        return Ok(());
+    }
+    let rm = app.state::<Arc<AudioRecordingManager>>().inner().clone();
+    tokio::task::spawn_blocking(move || rm.update_selected_device())
+        .await
+        .map_err(|e| format!("audio task join failed: {}", e))?
+        .map_err(|e| format!("Failed to update selected output: {}", e))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_selected_loopback_device(app: AppHandle) -> Result<String, String> {
+    Ok(get_settings(&app)
+        .selected_loopback_device
         .unwrap_or_else(|| "default".to_string()))
 }
 

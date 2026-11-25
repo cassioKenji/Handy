@@ -849,6 +849,44 @@ async getSelectedMicrophone() : Promise<Result<string, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getInputSource() : Promise<InputSource> {
+    return await TAURI_INVOKE("get_input_source");
+},
+async setInputSource(source: InputSource) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_input_source", { source }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async isLoopbackSupported() : Promise<boolean> {
+    return await TAURI_INVOKE("is_loopback_supported");
+},
+async getAvailableLoopbackDevices() : Promise<Result<AudioDevice[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_available_loopback_devices") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setSelectedLoopbackDevice(deviceName: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_selected_loopback_device", { deviceName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getSelectedLoopbackDevice() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_selected_loopback_device") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getAvailableOutputDevices() : Promise<Result<AudioDevice[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_available_output_devices") };
@@ -1024,7 +1062,7 @@ async updateRecordingRetentionPeriod(period: string) : Promise<Result<null, stri
 },
 /**
  * Checks if the Mac is a laptop by detecting battery presence
- * 
+ *
  * This uses pmset to check for battery information.
  * Returns true if a battery is detected (laptop), false otherwise (desktop)
  */
@@ -1121,7 +1159,16 @@ whats_new_last_seen_version?: string; selected_model?: string; onboarding_comple
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; 
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; 
+/**
+ * Record a microphone, or what a sound card is playing.
+ */
+input_source?: InputSource; 
+/**
+ * Name of the output to record; `None` follows the system's default
+ * output.
+ */
+selected_loopback_device?: string | null; translate_to_english?: boolean; selected_language?: string; 
 /**
  * Every language the person dictates in (codes, e.g. ["en", "zh"]),
  * picked during onboarding. Empty until then.
@@ -1231,6 +1278,18 @@ export type ImplementationChangeResult = { success: boolean;
  * List of binding IDs that were reset to defaults due to incompatibility
  */
 reset_bindings: string[] }
+/**
+ * Where dictation audio comes from.
+ */
+export type InputSource = 
+/**
+ * A microphone (`selected_microphone`).
+ */
+"microphone" | 
+/**
+ * What a sound card is playing (`selected_loopback_device`).
+ */
+"system_output"
 export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null; 
 /**
  * Counts only — key identity is deliberately never captured.
@@ -1337,7 +1396,7 @@ detail: string | null }
 /**
  * The frontend maps each code to its text in `src/lib/notices.ts`.
  */
-export type NoticeCode = "TranscriptionFailed" | "PasteFailed" | "PasteBlockedElevated" | "NoMicrophone" | "MicrophoneSilent" | "MicPermissionDenied" | "RecordingFailed" | "ModelLoadFailed" | "NoModelSelected" | "PostProcessFailed" | "FileTranscriptionFailed" | "FilePostProcessFailed"
+export type NoticeCode = "TranscriptionFailed" | "PasteFailed" | "PasteBlockedElevated" | "NoMicrophone" | "MicrophoneSilent" | "MicPermissionDenied" | "NoOutputDevice" | "SystemAudioSilent" | "SystemAudioUnsupported" | "RecordingFailed" | "ModelLoadFailed" | "NoModelSelected" | "PostProcessFailed" | "FileTranscriptionFailed" | "FilePostProcessFailed"
 export type NoticeLevel = 
 /**
  * Nothing came out, or Handy can't do its job.

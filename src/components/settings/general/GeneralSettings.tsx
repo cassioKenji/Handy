@@ -2,6 +2,8 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { type } from "@tauri-apps/plugin-os";
 import { MicrophoneSelector } from "../MicrophoneSelector";
+import { InputSourceSelector } from "../InputSourceSelector";
+import { SystemOutputSelector } from "../SystemOutputSelector";
 import { ChannelSelector } from "../ChannelSelector";
 import { ShortcutInput } from "../ShortcutInput";
 import { SettingsGroup } from "../../ui/SettingsGroup";
@@ -24,6 +26,7 @@ export const GeneralSettings: React.FC = () => {
   const speaksChinese =
     (getSetting("spoken_languages") ?? []).some(isChinese) ||
     (getSetting("chinese_script") ?? "as_transcribed") !== "as_transcribed";
+  const inputSource = getSetting("input_source") ?? "microphone";
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.general.title")}>
@@ -40,9 +43,16 @@ export const GeneralSettings: React.FC = () => {
       </SettingsGroup>
       <ModelSettingsCard />
       <SettingsGroup title={t("settings.sound.title")}>
-        <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
-        <ChannelSelector descriptionMode="tooltip" grouped={true} />
-        <MuteWhileRecording descriptionMode="tooltip" grouped={true} />
+        <InputSourceSelector descriptionMode="tooltip" grouped={true} />
+        {inputSource === "system_output" ? (
+          <SystemOutputSelector descriptionMode="tooltip" grouped={true} />
+        ) : (
+          <>
+            <MicrophoneSelector descriptionMode="tooltip" grouped={true} />
+            <ChannelSelector descriptionMode="tooltip" grouped={true} />
+            <MuteWhileRecording descriptionMode="tooltip" grouped={true} />
+          </>
+        )}
         <AudioFeedback descriptionMode="tooltip" grouped={true} />
         <OutputDeviceSelector
           descriptionMode="tooltip"

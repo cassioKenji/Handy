@@ -45,6 +45,9 @@ pub enum NoticeCode {
     NoMicrophone,
     MicrophoneSilent,
     MicPermissionDenied,
+    NoOutputDevice,
+    SystemAudioSilent,
+    SystemAudioUnsupported,
     RecordingFailed,
     ModelLoadFailed,
     NoModelSelected,
@@ -62,11 +65,16 @@ impl NoticeCode {
             | Self::NoMicrophone
             | Self::MicrophoneSilent
             | Self::MicPermissionDenied
+            | Self::NoOutputDevice
+            | Self::SystemAudioUnsupported
             | Self::RecordingFailed
             | Self::ModelLoadFailed
             | Self::NoModelSelected
             | Self::FileTranscriptionFailed => NoticeLevel::Error,
-            Self::PostProcessFailed | Self::FilePostProcessFailed => NoticeLevel::Warning,
+            // The recording worked; nothing was playing.
+            Self::PostProcessFailed | Self::FilePostProcessFailed | Self::SystemAudioSilent => {
+                NoticeLevel::Warning
+            }
         }
     }
 
@@ -79,6 +87,9 @@ impl NoticeCode {
             Self::NoMicrophone => &strings.no_input_device_title,
             Self::MicrophoneSilent => &strings.microphone_silent_title,
             Self::MicPermissionDenied => &strings.mic_permission_denied_title,
+            Self::NoOutputDevice => &strings.no_output_device_title,
+            Self::SystemAudioSilent => &strings.system_audio_silent_title,
+            Self::SystemAudioUnsupported => &strings.system_audio_unsupported_title,
             Self::RecordingFailed => &strings.recording_failed_title,
             Self::ModelLoadFailed => &strings.model_load_failed_title,
             Self::NoModelSelected => &strings.no_model_selected_title,

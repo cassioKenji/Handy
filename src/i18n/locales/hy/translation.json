@@ -463,6 +463,19 @@
       "volume": {
         "title": "Ձայնի բարձրություն",
         "description": "Կարգավորեք ձայնային արձագանքի բարձրությունը"
+      },
+      "inputSource": {
+        "title": "Input Source",
+        "description": "Record from a microphone, or from what your computer is playing",
+        "microphone": "Microphone",
+        "systemOutput": "System Output",
+        "unsupported": "Recording what your computer plays needs macOS 14.6 or later"
+      },
+      "systemOutput": {
+        "title": "Output to Record",
+        "description": "Which speakers or headphones to record",
+        "placeholder": "Select output...",
+        "loading": "Loading..."
       }
     },
     "advanced": {
@@ -957,7 +970,16 @@
     "filePostProcessFailedTitle": "Տառադարձվեց առանց հետմշակման",
     "filePostProcessFailed": "Հետմշակումը չավարտվեց, ուստի տառադարձումը պահպանվեց ինչպես կա։",
     "fileTranscriptionFailedTitle": "Ֆայլի տառադարձումը ձախողվեց",
-    "transcriptionFailedTitle": "Տառադարձումը ձախողվեց"
+    "transcriptionFailedTitle": "Տառադարձումը ձախողվեց",
+    "noOutputDeviceTitle": "No Output Device",
+    "noOutputDevice": "There is no speaker or headphone output to record. Connect one, or switch back to the microphone in Settings.",
+    "systemAudioSilentTitle": "Nothing Was Playing",
+    "systemAudioSilent": {
+      "generic": "Handy recorded your sound output, but nothing was playing.",
+      "macos": "Handy recorded your sound output, but nothing was playing. If something was, allow Handy in System Settings → Privacy & Security → System Audio Recording."
+    },
+    "systemAudioUnsupportedTitle": "System Audio Not Supported",
+    "systemAudioUnsupported": "Recording what your computer plays needs Windows, or macOS 14.6 or later. Switch back to the microphone in Settings."
   },
   "notices": {
     "errorOne": "{{n}} սխալ",

@@ -463,6 +463,19 @@
       "volume": {
         "title": "Volumen",
         "description": "Ajusta el volumen de los sonidos de retroalimentación de audio"
+      },
+      "inputSource": {
+        "title": "Input Source",
+        "description": "Record from a microphone, or from what your computer is playing",
+        "microphone": "Microphone",
+        "systemOutput": "System Output",
+        "unsupported": "Recording what your computer plays needs macOS 14.6 or later"
+      },
+      "systemOutput": {
+        "title": "Output to Record",
+        "description": "Which speakers or headphones to record",
+        "placeholder": "Select output...",
+        "loading": "Loading..."
       }
     },
     "advanced": {
@@ -957,7 +970,16 @@
     "filePostProcessFailedTitle": "Transcrito sin post proceso",
     "filePostProcessFailed": "El post proceso no terminó, así que la transcripción se guardó tal cual.",
     "fileTranscriptionFailedTitle": "Error al transcribir el archivo",
-    "transcriptionFailedTitle": "Error de transcripción"
+    "transcriptionFailedTitle": "Error de transcripción",
+    "noOutputDeviceTitle": "No Output Device",
+    "noOutputDevice": "There is no speaker or headphone output to record. Connect one, or switch back to the microphone in Settings.",
+    "systemAudioSilentTitle": "Nothing Was Playing",
+    "systemAudioSilent": {
+      "generic": "Handy recorded your sound output, but nothing was playing.",
+      "macos": "Handy recorded your sound output, but nothing was playing. If something was, allow Handy in System Settings → Privacy & Security → System Audio Recording."
+    },
+    "systemAudioUnsupportedTitle": "System Audio Not Supported",
+    "systemAudioUnsupported": "Recording what your computer plays needs Windows, or macOS 14.6 or later. Switch back to the microphone in Settings."
   },
   "notices": {
     "errorOne": "{{n}} error",
