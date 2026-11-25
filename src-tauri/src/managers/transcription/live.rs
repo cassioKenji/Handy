@@ -91,7 +91,7 @@ impl<'a> LiveSession<'a> {
                         model_id,
                         backend,
                     )
-                    .with_sink(sink),
+                    .with_sink(sink, backend),
                 ))
             }
         };

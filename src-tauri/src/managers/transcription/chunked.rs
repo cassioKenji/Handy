@@ -82,8 +82,19 @@ impl<'a> ChunkedDecode<'a> {
         }
     }
 
-    /// Writes each chunk's text to `sink` as soon as it is decoded.
-    pub(super) fn with_sink(mut self, sink: Option<Arc<LiveFileSink>>) -> Self {
+    /// Writes each chunk's text to `sink` as soon as it is decoded. The audio
+    /// is then cut at every pause between phrases, so the text arrives as the
+    /// user talks, instead of in chunks of about 30 s.
+    pub(super) fn with_sink(
+        mut self,
+        sink: Option<Arc<LiveFileSink>>,
+        backend: VadBackend,
+    ) -> Self {
+        if sink.is_some() {
+            let app_handle = self.tm.app_handle.clone();
+            self.chunker =
+                Chunker::by_phrase(Box::new(move || create_detector(backend, &app_handle)));
+        }
         self.sink = sink;
         self
     }
