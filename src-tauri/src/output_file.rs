@@ -2,9 +2,69 @@
 //! picked, instead of being pasted into the active application.
 
 use crate::settings::AppSettings;
+use log::error;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+/// The file a recording writes to as it goes, if the user set that up.
+pub fn live_file_path(settings: &AppSettings) -> Option<PathBuf> {
+    match destination(settings) {
+        Destination::File(path) => Some(path),
+        Destination::Paste | Destination::NoFile => None,
+    }
+}
+
+/// Writes each decoded chunk of one recording to the file the moment it is
+/// ready, so the file grows while the user is still talking. After a failure
+/// it stops writing, since the user has already been told.
+pub struct LiveFileSink {
+    path: PathBuf,
+    on_error: Box<dyn Fn(&std::io::Error) + Send + Sync>,
+    wrote: AtomicUsize,
+    failed: AtomicBool,
+}
+
+impl LiveFileSink {
+    pub fn new(path: PathBuf, on_error: Box<dyn Fn(&std::io::Error) + Send + Sync>) -> Self {
+        Self {
+            path,
+            on_error,
+            wrote: AtomicUsize::new(0),
+            failed: AtomicBool::new(false),
+        }
+    }
+
+    /// Adds `text` as a line. Blank text is skipped: a pause with no speech
+    /// must not leave an empty line.
+    pub fn write(&self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() || self.failed.load(Ordering::Acquire) {
+            return;
+        }
+        match append(&self.path, text) {
+            Ok(()) => {
+                self.wrote.fetch_add(1, Ordering::AcqRel);
+            }
+            Err(e) => {
+                error!("Failed to write a live chunk to {:?}: {}", self.path, e);
+                self.failed.store(true, Ordering::Release);
+                (self.on_error)(&e);
+            }
+        }
+    }
+
+    /// Whether any chunk reached the file. When one did, the end of the
+    /// recording must not write the whole text again.
+    pub fn wrote_any(&self) -> bool {
+        self.wrote.load(Ordering::Acquire) > 0
+    }
+
+    pub fn failed(&self) -> bool {
+        self.failed.load(Ordering::Acquire)
+    }
+}
 
 /// Where a finished transcription goes.
 #[derive(Debug, PartialEq, Eq)]
@@ -72,6 +132,70 @@ mod tests {
         assert_eq!(
             destination(&settings(true, Some("  "))),
             Destination::NoFile
+        );
+    }
+
+    fn quiet_sink(path: &Path) -> LiveFileSink {
+        LiveFileSink::new(path.to_path_buf(), Box::new(|_| {}))
+    }
+
+    #[test]
+    fn live_sink_writes_each_chunk_as_its_own_line() {
+        let path = temp_file("live.txt");
+        let _ = std::fs::remove_file(&path);
+        let sink = quiet_sink(&path);
+
+        sink.write("  first chunk ");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first chunk\n");
+        sink.write("second chunk");
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "first chunk\nsecond chunk\n"
+        );
+        assert!(sink.wrote_any() && !sink.failed());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn live_sink_skips_blank_chunks() {
+        let path = temp_file("live-blank.txt");
+        let _ = std::fs::remove_file(&path);
+        let sink = quiet_sink(&path);
+
+        sink.write("   ");
+        sink.write("");
+
+        assert!(!sink.wrote_any());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn live_sink_reports_a_failure_once_and_then_stops() {
+        let path = temp_file("live-missing-folder").join("out.txt");
+        let reports = std::sync::Arc::new(AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&reports);
+        let sink = LiveFileSink::new(
+            path,
+            Box::new(move |_| {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+
+        sink.write("one");
+        sink.write("two");
+
+        assert!(sink.failed() && !sink.wrote_any());
+        assert_eq!(reports.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn live_file_path_is_only_set_when_writing_to_a_file() {
+        assert_eq!(live_file_path(&settings(false, Some("a.txt"))), None);
+        assert_eq!(live_file_path(&settings(true, None)), None);
+        assert_eq!(
+            live_file_path(&settings(true, Some("a.txt"))),
+            Some(PathBuf::from("a.txt"))
         );
     }
 

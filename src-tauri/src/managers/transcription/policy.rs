@@ -47,11 +47,13 @@ pub enum BatchDecode {
 }
 
 /// Streaming wins: a streaming model handles long audio itself. Otherwise
-/// long audio is chunked unless the model keeps its accuracy on it.
-pub fn live_decode(model: ModelTraits, long_form_chunking: bool) -> LiveDecode {
+/// long audio is chunked unless the model keeps its accuracy on it, and a
+/// recording that writes to a file as it goes is chunked whatever the model:
+/// the chunks are what reach the file while the user is still talking.
+pub fn live_decode(model: ModelTraits, long_form_chunking: bool, live_to_file: bool) -> LiveDecode {
     if model.streaming {
         LiveDecode::Stream
-    } else if long_form_chunking && !model.long_form {
+    } else if live_to_file || (long_form_chunking && !model.long_form) {
         LiveDecode::Chunked
     } else {
         LiveDecode::None
@@ -65,5 +67,35 @@ pub fn batch_decode(model: ModelTraits, long_form_chunking: bool) -> BatchDecode
         BatchDecode::Chunked
     } else {
         BatchDecode::Whole
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LONG_FORM: ModelTraits = ModelTraits {
+        streaming: false,
+        long_form: true,
+    };
+    const STREAMING: ModelTraits = ModelTraits {
+        streaming: true,
+        long_form: false,
+    };
+
+    #[test]
+    fn a_long_form_model_waits_for_the_stop_unless_writing_to_a_file() {
+        assert_eq!(live_decode(LONG_FORM, true, false), LiveDecode::None);
+        assert_eq!(live_decode(LONG_FORM, true, true), LiveDecode::Chunked);
+    }
+
+    #[test]
+    fn writing_to_a_file_chunks_even_with_long_form_chunking_off() {
+        assert_eq!(live_decode(LONG_FORM, false, true), LiveDecode::Chunked);
+    }
+
+    #[test]
+    fn a_streaming_model_keeps_streaming_when_writing_to_a_file() {
+        assert_eq!(live_decode(STREAMING, true, true), LiveDecode::Stream);
     }
 }

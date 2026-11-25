@@ -596,7 +596,10 @@ impl ShortcutAction for TranscribeAction {
             streaming: model_supports_streaming,
             long_form: false,
         };
-        if live_decode(expected_model, settings.long_form_chunking) != LiveDecode::None {
+        let live_to_file = output_file::live_file_path(&settings).is_some();
+        if live_decode(expected_model, settings.long_form_chunking, live_to_file)
+            != LiveDecode::None
+        {
             tm.start_stream();
         }
         let plan_elapsed = plan_started.elapsed();
@@ -804,6 +807,9 @@ impl ShortcutAction for TranscribeAction {
                     // as an error, so it never starts a batch run.
                     let transcription_time = Instant::now();
                     let transcription_result = tm.transcribe_recording(samples);
+                    // Set only when each chunk already went to the output
+                    // file while the recording ran.
+                    let live_file = tm.take_live_file();
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
@@ -938,6 +944,30 @@ impl ShortcutAction for TranscribeAction {
                                         let destination =
                                             output_file::destination(&get_settings(&ah_clone));
                                         let (outcome, notice) = match destination {
+                                            // The chunks are already in the file, the last
+                                            // one included: writing the text again would
+                                            // repeat them.
+                                            output_file::Destination::File(_)
+                                                if live_file
+                                                    .as_ref()
+                                                    .is_some_and(|sink| sink.wrote_any()) =>
+                                            {
+                                                // A failed write already raised its notice.
+                                                let failed =
+                                                    live_file.as_ref().is_some_and(|s| s.failed());
+                                                if !failed && owns_ui() {
+                                                    notices::clear(
+                                                        &ah_clone,
+                                                        NoticeSource::Dictation,
+                                                    );
+                                                }
+                                                let outcome = if failed {
+                                                    TranscriptionOutcome::Failed
+                                                } else {
+                                                    TranscriptionOutcome::Typed
+                                                };
+                                                (outcome, None)
+                                            }
                                             output_file::Destination::File(path) => {
                                                 match output_file::append(&path, &final_text) {
                                                     Ok(()) => {

@@ -15,6 +15,7 @@ use crate::language_detection::{
 use crate::managers::audio::{create_smoothed_detector, AudioRecordingManager};
 use crate::managers::model::ModelManager;
 use crate::notices::{self, Notice, NoticeCode, NoticeSource};
+use crate::output_file::{self, LiveFileSink};
 use crate::overlay;
 use crate::settings::{
     get_settings, AppSettings, ChineseScript, ModelUnloadTimeout, TranscribeAcceleratorSetting,
@@ -272,6 +273,9 @@ pub struct TranscriptionManager {
     /// yet. This prevents a second worker from starting after finalize/cancel
     /// closes the router but before the first worker has fully exited.
     active_stream_worker: Arc<AtomicU64>,
+    /// The file writer of the recording in progress, when its chunks are
+    /// written as they are decoded.
+    live_file: Arc<Mutex<Option<Arc<LiveFileSink>>>>,
     /// True while a background job is queued or running. It holds the model,
     /// so one transcript is never written by two models.
     job_active: Arc<AtomicBool>,
@@ -297,6 +301,7 @@ impl TranscriptionManager {
             stream_active: Arc::new(AtomicBool::new(false)),
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
+            live_file: Arc::new(Mutex::new(None)),
             job_active: Arc::new(AtomicBool::new(false)),
             language_detector: Arc::new(LanguageDetector::default()),
         };
@@ -834,6 +839,8 @@ impl TranscriptionManager {
         }
         let (rx, cancelled) = self.router.open();
         self.stream_active.store(false, Ordering::Release);
+        // A writer left by an earlier recording is not this one's.
+        self.set_live_file(None);
 
         let manager = self.clone();
         thread::spawn(move || manager.run_stream_worker(rx, cancelled, worker_id));
@@ -885,9 +892,11 @@ impl TranscriptionManager {
             caps.supports_translate,
             caps.languages,
         );
+        let settings = get_settings(&self.app_handle);
         let mode = live_decode(
             ModelTraits::of(&info),
-            get_settings(&self.app_handle).long_form_chunking,
+            settings.long_form_chunking,
+            output_file::live_file_path(&settings).is_some(),
         );
         let Some(mut session) = LiveSession::begin(self, mode, &info, &model_id) else {
             // Nothing to decode live: the recording is transcribed in batch.
@@ -946,6 +955,20 @@ impl TranscriptionManager {
             Ok(Err(e)) => Err(e.into()),
             Err(_) => Ok(None),
         }
+    }
+
+    fn set_live_file(&self, sink: Option<Arc<LiveFileSink>>) {
+        *self.live_file.lock().unwrap_or_else(|e| e.into_inner()) = sink;
+    }
+
+    /// The recording's file writer, if its chunks went to the file while it
+    /// ran. Taken once: call it after [`transcribe_recording`]
+    /// (Self::transcribe_recording) has finalized the live decode.
+    pub fn take_live_file(&self) -> Option<Arc<LiveFileSink>> {
+        self.live_file
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
     }
 
     /// Abandon any live decode without producing text (e.g. on cancel). A
