@@ -638,6 +638,20 @@
           "traditionalTw": "Tradicional (Taiwan)",
           "traditionalHk": "Tradicional (Hong Kong)"
         }
+      },
+      "outputToFile": {
+        "label": "Salvar em Arquivo de Texto",
+        "description": "Adiciona cada transcrição ao final do seu arquivo de texto, em vez de colar no aplicativo ativo. O Histórico continua guardando todas as transcrições.",
+        "needsFile": "Escolha antes um arquivo de texto abaixo. Cada transcrição será adicionada ao final dele, em vez de ser colada."
+      },
+      "outputFile": {
+        "title": "Arquivo de Texto",
+        "description": "O arquivo que recebe as transcrições, uma por linha. Ele é criado se não existir, e o que já está nele é mantido.",
+        "none": "Nenhum arquivo selecionado",
+        "choose": "Escolher Arquivo",
+        "change": "Alterar",
+        "dialogTitle": "Escolher o Arquivo de Texto",
+        "filter": "Arquivo de texto"
       }
     },
     "postProcessing": {
@@ -979,7 +993,9 @@
       "macos": "O Handy gravou a saída de som, mas nada estava tocando. Se algo estava, permita o Handy em Ajustes do Sistema → Privacidade e Segurança → Gravação de Áudio do Sistema."
     },
     "systemAudioUnsupportedTitle": "Áudio do Sistema Indisponível",
-    "systemAudioUnsupported": "Gravar o que o computador toca exige Windows, ou macOS 14.6 ou mais novo. Volte para o microfone nas Configurações."
+    "systemAudioUnsupported": "Gravar o que o computador toca exige Windows, ou macOS 14.6 ou mais novo. Volte para o microfone nas Configurações.",
+    "outputFileFailedTitle": "Falha ao Salvar no Arquivo",
+    "outputFileFailed": "Não foi possível gravar a transcrição no seu arquivo de texto. Verifique se a pasta ainda existe e se nenhum outro programa está com o arquivo aberto, ou escolha outro arquivo nas Configurações."
   },
   "notices": {
     "errorOne": "{{n}} erro",

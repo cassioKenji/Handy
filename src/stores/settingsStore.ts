@@ -169,6 +169,10 @@ const settingUpdaters: {
   typing_tool: (value) => commands.changeTypingToolSetting(value as string),
   external_script_path: (value) =>
     commands.changeExternalScriptPathSetting(value as string | null),
+  output_to_file_enabled: (value) =>
+    commands.changeOutputToFileEnabledSetting(value as boolean),
+  output_file_path: (value) =>
+    commands.changeOutputFilePathSetting(value as string | null),
   clipboard_handling: (value) =>
     commands.changeClipboardHandlingSetting(value as string),
   auto_submit: (value) => commands.changeAutoSubmitSetting(value as boolean),
