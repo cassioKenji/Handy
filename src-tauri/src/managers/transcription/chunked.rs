@@ -1,6 +1,7 @@
 //! Long-form chunked decoding, shared by a live recording and a batch clip:
 //! both cut the same audio at the same pauses and decode it the same way.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use log::info;
@@ -11,6 +12,7 @@ use crate::audio_toolkit::chunking::Chunker;
 use crate::engine_supervisor::{CancelMark, EngineError, LoadedInfo};
 use crate::language_detection::Plan;
 use crate::managers::audio::create_detector;
+use crate::output_file::LiveFileSink;
 use crate::settings::{AppSettings, VadBackend};
 
 /// How a chunked decode's runs are set up: known up front (a whole clip), or
@@ -54,6 +56,8 @@ pub(super) struct ChunkedDecode<'a> {
     /// The first run that failed or was cancelled; nothing more is decoded
     /// after it.
     failure: Option<EngineError>,
+    /// Where each chunk's text goes the moment it is decoded.
+    sink: Option<Arc<LiveFileSink>>,
 }
 
 impl<'a> ChunkedDecode<'a> {
@@ -74,7 +78,25 @@ impl<'a> ChunkedDecode<'a> {
             chunker: Chunker::new(Box::new(move || create_detector(backend, &app_handle))),
             transcripts: Vec::new(),
             failure: None,
+            sink: None,
         }
+    }
+
+    /// Writes each chunk's text to `sink` as soon as it is decoded. The audio
+    /// is then cut at every pause between phrases, so the text arrives as the
+    /// user talks, instead of in chunks of about 30 s.
+    pub(super) fn with_sink(
+        mut self,
+        sink: Option<Arc<LiveFileSink>>,
+        backend: VadBackend,
+    ) -> Self {
+        if sink.is_some() {
+            let app_handle = self.tm.app_handle.clone();
+            self.chunker =
+                Chunker::by_phrase(Box::new(move || create_detector(backend, &app_handle)));
+        }
+        self.sink = sink;
+        self
     }
 
     /// A whole clip's chunks, decoded in order, and the setup they ran with.
@@ -155,6 +177,9 @@ impl<'a> ChunkedDecode<'a> {
                 .run_batch(self.mark, chunk, &run_options, &self.model_id)
             {
                 Ok(transcript) => {
+                    if let Some(sink) = &self.sink {
+                        sink.write(&transcript.text);
+                    }
                     self.transcripts.push(transcript);
                     // Real-time factor: audio seconds decoded per second of
                     // wall clock. Floored so a near-instant decode reports a

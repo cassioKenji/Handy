@@ -638,6 +638,20 @@
           "traditionalTw": "पारंपरिक (ताइवान)",
           "traditionalHk": "पारंपरिक (हांगकांग)"
         }
+      },
+      "outputToFile": {
+        "label": "Save to Text File",
+        "description": "Add each transcription to the end of your text file instead of pasting it into the active application. History still keeps every transcription.",
+        "needsFile": "Choose a text file below first. Each transcription is then added to the end of it instead of being pasted."
+      },
+      "outputFile": {
+        "title": "Text File",
+        "description": "The file that receives your transcriptions, one per line. It is created if it doesn't exist, and what it already has is kept.",
+        "none": "No file selected",
+        "choose": "Choose File",
+        "change": "Change",
+        "dialogTitle": "Choose the Text File",
+        "filter": "Text file"
       }
     },
     "postProcessing": {
@@ -979,7 +993,9 @@
       "macos": "Handy recorded your sound output, but nothing was playing. If something was, allow Handy in System Settings → Privacy & Security → System Audio Recording."
     },
     "systemAudioUnsupportedTitle": "System Audio Not Supported",
-    "systemAudioUnsupported": "Recording what your computer plays needs Windows, or macOS 14.6 or later. Switch back to the microphone in Settings."
+    "systemAudioUnsupported": "Recording what your computer plays needs Windows, or macOS 14.6 or later. Switch back to the microphone in Settings.",
+    "outputFileFailedTitle": "Failed to Save to File",
+    "outputFileFailed": "The transcript couldn't be written to your text file. Check that its folder still exists and that no other program has the file locked, or choose another file in Settings."
   },
   "notices": {
     "errorOne": "{{n}} त्रुटि",

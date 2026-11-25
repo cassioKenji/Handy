@@ -15,6 +15,8 @@ use super::{
 };
 use crate::audio_toolkit::OutputLanguageEvidence;
 use crate::engine_supervisor::{EngineError, LoadedInfo, StreamHandle, StreamProgress};
+use crate::notices::{self, Notice, NoticeCode, NoticeSource};
+use crate::output_file::{self, LiveFileSink};
 use crate::settings::{get_settings, AppSettings};
 
 /// One recording's live decode.
@@ -61,17 +63,36 @@ impl<'a> LiveSession<'a> {
             LiveDecode::Chunked => {
                 info!("Live long-form chunking started (model '{}')", model_id);
                 let backend = settings.vad_backend;
-                LiveDecoder::Chunked(Box::new(ChunkedDecode::new(
-                    tm,
-                    tm.engine.cancel_mark(),
-                    ChunkSetup::Pending(Box::new(PendingSetup {
-                        plan,
-                        info: info.clone(),
-                        settings,
-                    })),
-                    model_id,
-                    backend,
-                )))
+                // With an output file, each chunk goes to it as it is decoded.
+                let sink = output_file::live_file_path(&settings).map(|path| {
+                    info!("Writing each chunk to {:?} as it is decoded", path);
+                    let app = tm.app_handle.clone();
+                    Arc::new(LiveFileSink::new(
+                        path,
+                        Box::new(move |e| {
+                            notices::raise_without_overlay(
+                                &app,
+                                Notice::new(NoticeCode::OutputFileFailed, NoticeSource::Dictation)
+                                    .with_detail(e.to_string()),
+                            );
+                        }),
+                    ))
+                });
+                tm.set_live_file(sink.clone());
+                LiveDecoder::Chunked(Box::new(
+                    ChunkedDecode::new(
+                        tm,
+                        tm.engine.cancel_mark(),
+                        ChunkSetup::Pending(Box::new(PendingSetup {
+                            plan,
+                            info: info.clone(),
+                            settings,
+                        })),
+                        model_id,
+                        backend,
+                    )
+                    .with_sink(sink, backend),
+                ))
             }
         };
         Some(Self { decoder })

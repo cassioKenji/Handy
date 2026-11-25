@@ -1060,6 +1060,28 @@ pub fn change_external_script_path_setting(
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_output_to_file_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.output_to_file_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_output_file_path_setting(app: AppHandle, path: Option<String>) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    // No file means nothing to write to, so the switch can't stay on.
+    if path.is_none() {
+        settings.output_to_file_enabled = false;
+    }
+    settings.output_file_path = path;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_clipboard_handling_setting(app: AppHandle, handling: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     let parsed = match handling.as_str() {

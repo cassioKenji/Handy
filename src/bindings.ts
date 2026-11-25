@@ -216,6 +216,22 @@ async changeExternalScriptPathSetting(path: string | null) : Promise<Result<null
     else return { status: "error", error: e  as any };
 }
 },
+async changeOutputToFileEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_output_to_file_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeOutputFilePathSetting(path: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_output_file_path_setting", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeClipboardHandlingSetting(handling: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_clipboard_handling_setting", { handling }) };
@@ -1185,7 +1201,11 @@ airpods_mode?: boolean; keyboard_implementation?: KeyboardImplementation; show_t
  * after the target app actually reads the transcript, instead of after a
  * fixed delay. See `paste_tx`. macOS and Windows only.
  */
-reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; 
+reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; 
+/**
+ * Append each transcription to `output_file_path` instead of pasting it.
+ */
+output_to_file_enabled?: boolean; output_file_path?: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; 
 /**
  * Fresh installs default from the OS locale; existing stores are migrated
  * in `apply_settings_migrations`.
@@ -1396,7 +1416,7 @@ detail: string | null }
 /**
  * The frontend maps each code to its text in `src/lib/notices.ts`.
  */
-export type NoticeCode = "TranscriptionFailed" | "PasteFailed" | "PasteBlockedElevated" | "NoMicrophone" | "MicrophoneSilent" | "MicPermissionDenied" | "NoOutputDevice" | "SystemAudioSilent" | "SystemAudioUnsupported" | "RecordingFailed" | "ModelLoadFailed" | "NoModelSelected" | "PostProcessFailed" | "FileTranscriptionFailed" | "FilePostProcessFailed"
+export type NoticeCode = "TranscriptionFailed" | "PasteFailed" | "PasteBlockedElevated" | "OutputFileFailed" | "NoMicrophone" | "MicrophoneSilent" | "MicPermissionDenied" | "NoOutputDevice" | "SystemAudioSilent" | "SystemAudioUnsupported" | "RecordingFailed" | "ModelLoadFailed" | "NoModelSelected" | "PostProcessFailed" | "FileTranscriptionFailed" | "FilePostProcessFailed"
 export type NoticeLevel = 
 /**
  * Nothing came out, or Handy can't do its job.

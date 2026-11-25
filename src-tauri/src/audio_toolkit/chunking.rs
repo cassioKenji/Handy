@@ -29,6 +29,14 @@ const MIN_CHUNK_SAMPLES: usize = 5 * RATE;
 /// for the whole clip.
 const LOOKAHEAD_SAMPLES: usize = MIN_CHUNK_SAMPLES;
 
+/// By phrase, a pause this long ends a phrase: long enough to be the end of a
+/// sentence rather than a breath.
+const PHRASE_PAUSE_SAMPLES: usize = 700 * RATE / 1000;
+/// No phrase is cut shorter than this, so a hesitation doesn't split a sentence.
+const PHRASE_MIN_SAMPLES: usize = 3 * RATE / 2;
+/// A phrase with no pause is cut at this length, as long audio is.
+const PHRASE_MAX_SAMPLES: usize = 30 * RATE;
+
 // Silero's `get_speech_timestamps` defaults, as `VadSession::run` applies them.
 const THRESHOLD: f32 = 0.5;
 const NEG_THRESHOLD: f32 = THRESHOLD - 0.15;
@@ -165,6 +173,39 @@ fn plan_cuts(candidates: &[CutCandidate], samples: usize, from: usize) -> Vec<us
     cuts
 }
 
+/// Cuts for phrase by phrase decoding, in order: the middle of every pause of
+/// [`PHRASE_PAUSE_SAMPLES`] or more after a phrase of at least
+/// [`PHRASE_MIN_SAMPLES`], and a hard cut where a phrase runs past
+/// [`PHRASE_MAX_SAMPLES`] with no pause. The cut sits that pause's half-length
+/// after the speech, not at its middle, so it doesn't move while the pause
+/// grows and a live cut equals the one made with the whole clip. With `last`
+/// (the audio is complete) the pause at the very end is not a cut: nothing
+/// follows it.
+fn phrase_cuts(segments: &[Range<usize>], scored: usize, start: usize, last: bool) -> Vec<usize> {
+    let mut cuts = Vec::new();
+    let mut from = start;
+    for (i, segment) in segments.iter().enumerate() {
+        let is_last_segment = i + 1 == segments.len();
+        if last && is_last_segment {
+            continue;
+        }
+        let pause_end = segments.get(i + 1).map_or(scored, |next| next.start);
+        if pause_end.saturating_sub(segment.end) < PHRASE_PAUSE_SAMPLES {
+            continue;
+        }
+        let cut = segment.end + PHRASE_PAUSE_SAMPLES / 2;
+        if cut >= from + PHRASE_MIN_SAMPLES {
+            cuts.push(cut);
+            from = cut;
+        }
+    }
+    while scored - from > PHRASE_MAX_SAMPLES {
+        from += PHRASE_MAX_SAMPLES;
+        cuts.push(from);
+    }
+    cuts
+}
+
 /// Makes a fresh scorer for one clip.
 pub type MakeScorer = Box<dyn Fn() -> Result<Box<dyn SpeechScorer>> + Send>;
 
@@ -193,6 +234,11 @@ pub struct Chunker {
     probs: Vec<f32>,
     start: usize,
     len: usize,
+    /// Cut at every pause between phrases, not into chunks of about 30 s.
+    phrases: bool,
+    /// By phrase: whether the audio after the last cut has any speech. A rest
+    /// of silence is not decoded.
+    tail_speech: bool,
 }
 
 impl Chunker {
@@ -208,7 +254,52 @@ impl Chunker {
             probs: Vec::new(),
             start: 0,
             len: 0,
+            phrases: false,
+            tail_speech: true,
         }
+    }
+
+    /// As [`new`](Self::new), but each phrase is a chunk, cut at the pause
+    /// that ends it, so the text can be used while the user keeps talking.
+    pub fn by_phrase(make_scorer: MakeScorer) -> Self {
+        Self {
+            phrases: true,
+            ..Self::new(make_scorer)
+        }
+    }
+
+    /// Chunks for phrase by phrase decoding: those whose pause is already
+    /// long enough to end them. With `last`, the audio is complete.
+    fn phrase_chunks(&mut self, last: bool) -> Vec<Vec<f32>> {
+        // Nothing to cut before one phrase and its pause could be there.
+        if self.uncut
+            || (!last && self.len - self.start < PHRASE_MIN_SAMPLES + PHRASE_PAUSE_SAMPLES)
+        {
+            return Vec::new();
+        }
+        let scored = match self.score(last) {
+            Ok(scored) => scored,
+            Err(e) => {
+                self.stop_cutting(e);
+                return Vec::new();
+            }
+        };
+        // Only this phrase's frames: what is before it is done with.
+        let first_frame = self.start / self.frame_samples;
+        let offset = first_frame * self.frame_samples;
+        let segments: Vec<Range<usize>> = speech_segments(
+            &self.probs[first_frame..],
+            self.frame_samples,
+            scored - offset,
+        )
+        .into_iter()
+        .map(|segment| segment.start + offset..segment.end + offset)
+        .collect();
+        let cuts = phrase_cuts(&segments, scored, self.start, last);
+        let rest_from = cuts.last().copied().unwrap_or(self.start);
+        // Speech after the last cut: without it the rest is only silence.
+        self.tail_speech = segments.last().is_some_and(|s| s.end > rest_from);
+        cuts.into_iter().map(|cut| self.take_until(cut)).collect()
     }
 
     /// Samples pushed so far, chunked or not. A caller checks this against
@@ -226,6 +317,9 @@ impl Chunker {
             self.pending = pcm;
         } else {
             self.pending.extend_from_slice(&pcm);
+        }
+        if self.phrases {
+            return self.phrase_chunks(false);
         }
         if self.uncut || self.len - self.start <= MAX_CHUNK_SAMPLES + LOOKAHEAD_SAMPLES {
             return Vec::new();
@@ -261,7 +355,9 @@ impl Chunker {
     /// more is pushed after.
     pub fn finish(&mut self) -> Vec<Vec<f32>> {
         let mut chunks = Vec::new();
-        if !self.uncut && self.len - self.start > MAX_CHUNK_SAMPLES {
+        if self.phrases {
+            chunks = self.phrase_chunks(true);
+        } else if !self.uncut && self.len - self.start > MAX_CHUNK_SAMPLES {
             match self.score(true) {
                 Ok(_) => {
                     let segments = speech_segments(&self.probs, self.frame_samples, self.len);
@@ -275,7 +371,13 @@ impl Chunker {
             }
         }
         if self.len > self.start {
-            chunks.push(self.take_until(self.len));
+            if self.phrases && !self.tail_speech {
+                // Only silence is left: not worth decoding.
+                self.pending.clear();
+                self.start = self.len;
+            } else {
+                chunks.push(self.take_until(self.len));
+            }
         }
         chunks
     }
@@ -585,6 +687,91 @@ mod tests {
         }
         live.extend(chunker.finish());
         assert_eq!(lengths(&live), planned);
+    }
+
+    /// Phrase cut positions for a clip, in tenths of a second.
+    fn phrase_plan(seconds: f64, pauses: &[(f64, f64)], last: bool) -> Vec<f64> {
+        let samples = s(seconds);
+        let segments = speech_segments(&probs_with_pauses(seconds, pauses), FRAME, samples);
+        phrase_cuts(&segments, samples, 0, last)
+            .into_iter()
+            .map(|cut| (cut as f64 / RATE as f64 * 10.0).round() / 10.0)
+            .collect()
+    }
+
+    #[test]
+    fn phrases_are_cut_a_little_after_each_long_pause() {
+        // 1 s pauses cut 0.35 s after the speech (plus its 30 ms pad); the
+        // 0.3 s one is a breath, not a sentence.
+        assert_eq!(
+            phrase_plan(12.0, &[(3.0, 4.0), (6.0, 6.3), (8.0, 9.0)], false),
+            vec![3.4, 8.4]
+        );
+    }
+
+    #[test]
+    fn a_hesitation_does_not_split_a_short_phrase() {
+        // A pause 0.5 s in would leave a phrase under 1.5 s.
+        assert!(phrase_plan(6.0, &[(0.5, 1.5)], false).is_empty());
+    }
+
+    #[test]
+    fn a_phrase_without_a_pause_is_cut_at_30_s() {
+        assert_eq!(phrase_plan(70.0, &[], false), vec![30.0, 60.0]);
+    }
+
+    #[test]
+    fn the_pause_at_the_end_is_not_a_cut_once_the_audio_is_complete() {
+        let pauses = [(3.0, 4.0), (7.0, 9.0)];
+        assert_eq!(phrase_plan(9.0, &pauses, false), vec![3.4, 7.4]);
+        assert_eq!(phrase_plan(9.0, &pauses, true), vec![3.4]);
+    }
+
+    #[test]
+    fn phrases_arrive_while_the_user_is_still_talking() {
+        let pcm = clip(&probs_with_pauses(12.0, &[(3.0, 4.0), (7.0, 8.0)]));
+        let (mut once, _) = chunker();
+        once.phrases = true;
+        let mut offline = once.push(&pcm[..]);
+        offline.extend(once.finish());
+        assert_eq!(offline.len(), 3);
+
+        let (mut live_chunker, _) = chunker();
+        live_chunker.phrases = true;
+        let mut live = Vec::new();
+        for piece in pcm.chunks(FRAME * 3 + 7) {
+            live.extend(live_chunker.push(piece));
+        }
+        assert_eq!(live.len(), 2, "two phrases are out before the end");
+        live.extend(live_chunker.finish());
+        assert_eq!(lengths(&live), lengths(&offline));
+        assert_eq!(live.concat(), pcm, "every sample once, in order");
+    }
+
+    #[test]
+    fn a_rest_of_only_silence_is_not_decoded() {
+        // Speech for 5 s, then 3 s of silence: the phrase is cut live once the
+        // pause is long enough, and what is left when it stops is silence.
+        let pcm = clip(&probs_with_pauses(8.0, &[(5.0, 8.0)]));
+        let (mut chunker, _) = chunker();
+        chunker.phrases = true;
+        let mut live = Vec::new();
+        for piece in pcm.chunks(FRAME) {
+            live.extend(chunker.push(piece));
+        }
+        assert_eq!(live.len(), 1);
+        assert!(chunker.finish().is_empty());
+    }
+
+    #[test]
+    fn a_recording_without_speech_has_nothing_to_decode() {
+        let pcm = clip(&probs_with_pauses(4.0, &[(0.0, 4.0)]));
+        let (mut chunker, _) = chunker();
+        chunker.phrases = true;
+        for piece in pcm.chunks(FRAME) {
+            assert!(chunker.push(piece).is_empty());
+        }
+        assert!(chunker.finish().is_empty());
     }
 
     #[test]

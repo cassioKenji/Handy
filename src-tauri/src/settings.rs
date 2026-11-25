@@ -549,6 +549,11 @@ pub struct AppSettings {
     pub typing_tool: TypingTool,
     #[serde(default)]
     pub external_script_path: Option<String>,
+    /// Append each transcription to `output_file_path` instead of pasting it.
+    #[serde(default)]
+    pub output_to_file_enabled: bool,
+    #[serde(default)]
+    pub output_file_path: Option<String>,
     #[serde(default = "default_filler_word_removal_enabled")]
     pub filler_word_removal_enabled: bool,
     #[serde(default)]
@@ -1084,6 +1089,8 @@ pub fn get_default_settings() -> AppSettings {
         reliable_paste: false,
         typing_tool: default_typing_tool(),
         external_script_path: None,
+        output_to_file_enabled: false,
+        output_file_path: None,
         filler_word_removal_enabled: default_filler_word_removal_enabled(),
         custom_filler_words: None,
         chinese_script: default_chinese_script(),

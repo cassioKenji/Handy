@@ -18,6 +18,7 @@ mod llm_client;
 mod managers;
 mod memory;
 mod notices;
+mod output_file;
 mod overlay;
 mod paste_tx;
 pub mod portable;
@@ -715,6 +716,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::get_available_typing_tools,
             shortcut::change_typing_tool_setting,
             shortcut::change_external_script_path_setting,
+            shortcut::change_output_to_file_enabled_setting,
+            shortcut::change_output_file_path_setting,
             shortcut::change_clipboard_handling_setting,
             shortcut::change_auto_submit_setting,
             shortcut::change_auto_submit_key_setting,
