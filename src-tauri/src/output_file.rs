@@ -7,6 +7,24 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+/// `--output-file`: the file for the next recording, kept in memory only
+/// (CLI flags never change persisted settings). The coordinator sets it
+/// while idle and clears it when that recording's session ends.
+static OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+pub fn set_override(path: PathBuf) {
+    *OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
+}
+
+pub fn clear_override() {
+    *OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+fn current_override() -> Option<PathBuf> {
+    OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
 
 /// The file a recording writes to as it goes, if the user set that up.
 pub fn live_file_path(settings: &AppSettings) -> Option<PathBuf> {
@@ -78,6 +96,15 @@ pub enum Destination {
 }
 
 pub fn destination(settings: &AppSettings) -> Destination {
+    resolve(current_override().as_deref(), settings)
+}
+
+/// The override wins over settings, even with the switch off: the caller
+/// asked for this file explicitly.
+fn resolve(override_path: Option<&Path>, settings: &AppSettings) -> Destination {
+    if let Some(path) = override_path {
+        return Destination::File(path.to_path_buf());
+    }
     if !settings.output_to_file_enabled {
         return Destination::Paste;
     }
@@ -133,6 +160,32 @@ mod tests {
             destination(&settings(true, Some("  "))),
             Destination::NoFile
         );
+    }
+
+    // These test `resolve`, never the global OVERRIDE: tests run in
+    // parallel and a test that set it would break the others.
+    #[test]
+    fn override_wins_over_paste() {
+        assert_eq!(
+            resolve(Some(Path::new("C:\\m.txt")), &settings(false, None)),
+            Destination::File(PathBuf::from("C:\\m.txt"))
+        );
+    }
+
+    #[test]
+    fn override_wins_over_the_picked_file() {
+        assert_eq!(
+            resolve(
+                Some(Path::new("C:\\m.txt")),
+                &settings(true, Some("C:\\notes.txt"))
+            ),
+            Destination::File(PathBuf::from("C:\\m.txt"))
+        );
+    }
+
+    #[test]
+    fn no_override_keeps_settings_behaviour() {
+        assert_eq!(resolve(None, &settings(true, None)), Destination::NoFile);
     }
 
     fn quiet_sink(path: &Path) -> LiveFileSink {
