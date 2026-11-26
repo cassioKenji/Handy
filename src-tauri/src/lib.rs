@@ -25,6 +25,7 @@ pub mod portable;
 #[cfg(target_os = "linux")]
 mod primary_selection;
 mod secure_input;
+mod session_status;
 mod settings;
 mod shortcut;
 mod signal_handle;
