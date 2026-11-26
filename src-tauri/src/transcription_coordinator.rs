@@ -1,7 +1,7 @@
 use crate::actions::ACTION_MAP;
 use crate::managers::audio::AudioRecordingManager;
 use crate::settings::ShortcutActivation;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::mpsc::{self, Sender};
@@ -207,8 +207,14 @@ enum Effect {
 /// Commands processed sequentially by the coordinator thread.
 enum Command {
     Input(InputEvent),
-    Cancel { recording_was_active: bool },
+    Cancel {
+        recording_was_active: bool,
+    },
     ProcessingFinished,
+    /// `--output-file`: applies only while nothing is recording or processing.
+    SetOutputFile(std::path::PathBuf),
+    /// `--start-transcription`: an external press that never stops a session.
+    ExternalStart(InputEvent),
 }
 
 /// Decide whether a key-up should be deferred (so auto-repeat can cancel it)
@@ -287,6 +293,22 @@ impl CoordinatorState {
     /// A recording is running and outlives its key (a tap, or toggle mode).
     fn is_recording_locked(&self) -> bool {
         matches!(self.stage, Stage::Recording(_)) && self.hold.as_ref().is_some_and(|h| h.locked)
+    }
+
+    /// Whether the output file may change now: a session in flight still
+    /// writes to the file it started with.
+    fn can_change_output_file(&self) -> bool {
+        matches!(self.stage, Stage::Idle) && self.pending_press.is_none()
+    }
+
+    /// A start-only external press. While recording, or with a start already
+    /// remembered, a toggle press would stop or forget it, so it is ignored.
+    /// While processing it is remembered and starts once the pipeline drains.
+    fn on_external_start(&mut self, input: InputEvent, now: Instant) -> Option<Effect> {
+        if matches!(self.stage, Stage::Recording(_)) || self.pending_press.is_some() {
+            return None;
+        }
+        self.on_input(input, now)
     }
 
     fn on_input(&mut self, input: InputEvent, now: Instant) -> Option<Effect> {
@@ -631,12 +653,43 @@ impl TranscriptionCoordinator {
                                 recording_was_active || matches!(state.stage, Stage::Processing);
                             state.on_cancel(recording_was_active);
                             if busy {
+                                end_session(&app);
                                 emit_recording_phase(&app, RecordingPhase::Cancelled);
                             }
                         }
                         Command::ProcessingFinished => {
+                            // A late finish after a cancel (stage already Idle)
+                            // belongs to a session that already ended; don't
+                            // touch a newer one. Before on_processing_finished,
+                            // which may start a remembered recording.
+                            if matches!(state.stage, Stage::Processing) {
+                                end_session(&app);
+                            }
                             if let Some(effect) = state.on_processing_finished() {
                                 run_effect(&app, &mut state, effect);
+                            }
+                        }
+                        Command::SetOutputFile(path) => {
+                            if state.can_change_output_file() {
+                                debug!("Output file for the next recording: {:?}", path);
+                                crate::output_file::set_override(path);
+                            } else {
+                                warn!(
+                                    "Ignoring --output-file {:?}: a recording session is running",
+                                    path
+                                );
+                            }
+                        }
+                        Command::ExternalStart(input) => {
+                            let now = input.received_at;
+                            match state.on_external_start(input, now) {
+                                Some(effect) => run_effect(&app, &mut state, effect),
+                                None if matches!(state.stage, Stage::Recording(_)) => {
+                                    info!("Ignoring --start-transcription: already recording")
+                                }
+                                None => {
+                                    debug!("--start-transcription waits for processing to end")
+                                }
                             }
                         }
                     }
@@ -713,6 +766,29 @@ impl TranscriptionCoordinator {
         }
     }
 
+    /// `--start-transcription`: start a recording, never stop one.
+    pub fn send_external_start(&self, binding_id: &str, source: &str) {
+        let input = InputEvent {
+            binding_id: binding_id.to_string(),
+            hotkey_string: source.to_string(),
+            is_pressed: true,
+            mode: ShortcutActivation::Toggle,
+            hold_threshold: Duration::ZERO,
+            external: true,
+            received_at: Instant::now(),
+        };
+        if self.tx.send(Command::ExternalStart(input)).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
+    /// `--output-file`: the file for the next recording.
+    pub fn send_output_file(&self, path: std::path::PathBuf) {
+        if self.tx.send(Command::SetOutputFile(path)).is_err() {
+            warn!("Transcription coordinator channel closed");
+        }
+    }
+
     pub fn notify_cancel(&self, recording_was_active: bool) {
         if self
             .tx
@@ -732,6 +808,13 @@ impl TranscriptionCoordinator {
     }
 }
 
+/// A recording session ended: the CLI override was for that recording only,
+/// and recording.json must not claim a session that is over.
+fn end_session(app: &AppHandle) {
+    crate::output_file::clear_override();
+    crate::session_status::clear(app);
+}
+
 fn run_effect(app: &AppHandle, state: &mut CoordinatorState, effect: Effect) {
     match effect {
         Effect::Start {
@@ -741,7 +824,12 @@ fn run_effect(app: &AppHandle, state: &mut CoordinatorState, effect: Effect) {
             let started = start(app, &binding_id, &hotkey_string);
             state.on_start_result(&binding_id, started);
             if started {
+                crate::session_status::write_started(app);
                 emit_recording_phase(app, RecordingPhase::Started);
+            } else {
+                // Nothing will record: drop the override so a later dictation
+                // doesn't land in that file.
+                end_session(app);
             }
         }
         Effect::Stop {
@@ -1182,6 +1270,61 @@ mod tests {
     }
 
     const OTHER_BINDING: &str = "transcribe_with_post_process";
+
+    #[test]
+    fn external_start_from_idle_starts() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        assert!(matches!(
+            state.on_external_start(toggle_input(true), now),
+            Some(Effect::Start { .. })
+        ));
+    }
+
+    #[test]
+    fn external_start_while_recording_does_nothing() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        state.on_external_start(toggle_input(true), now);
+        let effect = state.on_external_start(toggle_input(true), now + Duration::from_secs(1));
+        assert_eq!(effect, None);
+        assert_eq!(state.stage, Stage::Recording(BINDING.to_string()));
+    }
+
+    #[test]
+    fn external_start_while_processing_starts_after_drain() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        drive_into_processing(&mut state, now);
+        assert_eq!(state.on_external_start(toggle_input(true), now), None);
+        assert!(matches!(
+            state.on_processing_finished(),
+            Some(Effect::Start { .. })
+        ));
+    }
+
+    #[test]
+    fn second_external_start_while_processing_keeps_the_first() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        drive_into_processing(&mut state, now);
+        state.on_external_start(toggle_input(true), now);
+        state.on_external_start(toggle_input(true), now);
+        assert!(state.pending_press.is_some());
+        assert!(matches!(
+            state.on_processing_finished(),
+            Some(Effect::Start { .. })
+        ));
+    }
+
+    #[test]
+    fn output_file_changes_only_when_idle() {
+        let mut state = CoordinatorState::new();
+        let now = Instant::now();
+        assert!(state.can_change_output_file());
+        state.on_external_start(toggle_input(true), now);
+        assert!(!state.can_change_output_file());
+    }
 
     /// Only one press can be pending. Once a binding has claimed it, a toggle
     /// for a different binding is ignored (as it is while recording) instead of

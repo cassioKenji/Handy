@@ -25,6 +25,7 @@ pub mod portable;
 #[cfg(target_os = "linux")]
 mod primary_selection;
 mod secure_input;
+mod session_status;
 mod settings;
 mod shortcut;
 mod signal_handle;
@@ -919,8 +920,22 @@ pub fn run(cli_args: CliArgs) {
     // app is already open, so skip it in headless mode and run a standalone
     // instance instead.
     if !headless_mode {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if args.iter().any(|a| a == "--toggle-transcription") {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            // --output-file / --start-transcription carry a value, so parse the
+            // forwarded argv instead of matching strings.
+            let parsed = <CliArgs as clap::Parser>::try_parse_from(&args).ok();
+            let output_file = parsed.as_ref().and_then(|a| a.output_file.clone());
+            let start = parsed.as_ref().is_some_and(|a| a.start_transcription);
+            if output_file.is_some() || start {
+                // Same coordinator queue: the file changes before recording starts.
+                if let Some(path) = output_file {
+                    let path = cli::resolve_output_file(&path, std::path::Path::new(&cwd));
+                    signal_handle::set_output_file(app, path);
+                }
+                if start {
+                    signal_handle::start_transcription(app, "transcribe", "CLI");
+                }
+            } else if args.iter().any(|a| a == "--toggle-transcription") {
                 signal_handle::send_transcription_input(app, "transcribe", "CLI");
             } else if args.iter().any(|a| a == "--toggle-post-process") {
                 signal_handle::send_transcription_input(app, "transcribe_with_post_process", "CLI");
@@ -1162,7 +1177,17 @@ pub fn run(cli_args: CliArgs) {
 
             // Handy wasn't running, so no single-instance callback handles this flag; do it here (#2554).
             // Must stay at the end of setup(): recording starts immediately and needs the managers, tray and overlay.
-            if cli_args.toggle_transcription {
+            // A crash may have left recording.json behind; this process owns it now.
+            session_status::clear(&app_handle);
+
+            if let Some(path) = cli_args.output_file.clone() {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                signal_handle::set_output_file(&app_handle, cli::resolve_output_file(&path, &cwd));
+            }
+
+            if cli_args.start_transcription {
+                signal_handle::start_transcription(&app_handle, "transcribe", "CLI");
+            } else if cli_args.toggle_transcription {
                 signal_handle::send_transcription_input(&app_handle, "transcribe", "CLI");
             } else if cli_args.toggle_post_process {
                 signal_handle::send_transcription_input(
@@ -1211,9 +1236,7 @@ pub fn run(cli_args: CliArgs) {
     #[cfg(target_os = "macos")]
     apply_startup_activation_policy(&mut app, headless_mode);
 
-    // `app` is only used by the macOS arm.
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
-    app.run(|app, event| match &event {
+    app.run(move |app, event| match &event {
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {
             // Fired when the already-running bundle is launched again from
@@ -1231,6 +1254,9 @@ pub fn run(cli_args: CliArgs) {
             }
             show_main_window(app);
         }
+        // A session cut short by quitting must not look alive to scripts. A
+        // headless run is a separate process and never owns the file.
+        tauri::RunEvent::Exit if !headless_mode => session_status::clear(app),
         // No transcription teardown on exit: transcribe.cpp runs only in the
         // worker process, which exits by itself as soon as this process's end
         // of its stdin closes, even if it is hung. Waiting on an unload here

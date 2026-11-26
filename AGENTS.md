@@ -208,6 +208,8 @@ Handy supports command-line parameters on all platforms for integration with scr
 | `--toggle-transcription` | Toggle recording on/off; starts it if Handy isn't running  |
 | `--toggle-post-process`  | Toggle recording with post-processing on/off               |
 | `--cancel`               | Cancel the current operation on a running instance         |
+| `--start-transcription`  | Start recording, never stop it; no-op while recording      |
+| `--output-file <FILE>`   | Write the next recording to FILE (runtime only)            |
 | `--start-hidden`         | Launch without showing the main window (tray icon visible) |
 | `--no-tray`              | Launch without system tray (closing window quits the app)  |
 | `--debug`                | Enable debug mode with verbose (Trace) logging             |
@@ -217,6 +219,8 @@ Handy supports command-line parameters on all platforms for integration with scr
 - CLI flags are runtime-only overrides — they do NOT modify persisted settings
 - Remote control flags work via `tauri_plugin_single_instance`: second instance sends args, then exits
 - `send_transcription_input()` in `signal_handle.rs` is shared between signal handlers and CLI
+- `--output-file` lasts for one recording: the coordinator applies it only while idle and drops it when that session ends
+- While a recording session runs, `recording.json` in the app data folder holds its file, source, device, start time and pid; it is removed when the session ends, at startup and on exit
 
 ## Debug Mode
 
