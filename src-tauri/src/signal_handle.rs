@@ -23,6 +23,24 @@ pub fn send_transcription_input(app: &AppHandle, binding_id: &str, source: &str)
     }
 }
 
+/// `--start-transcription`: start recording, never stop it.
+pub fn start_transcription(app: &AppHandle, binding_id: &str, source: &str) {
+    if let Some(c) = app.try_state::<TranscriptionCoordinator>() {
+        c.send_external_start(binding_id, source);
+    } else {
+        warn!("TranscriptionCoordinator not initialized");
+    }
+}
+
+/// `--output-file`: the file for the next recording.
+pub fn set_output_file(app: &AppHandle, path: std::path::PathBuf) {
+    if let Some(c) = app.try_state::<TranscriptionCoordinator>() {
+        c.send_output_file(path);
+    } else {
+        warn!("TranscriptionCoordinator not initialized");
+    }
+}
+
 /// Listen for Unix signals that remotely toggle transcription.
 ///
 /// SIGUSR2 toggles plain transcription on all Unix platforms. SIGUSR1
